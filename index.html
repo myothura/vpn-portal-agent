@@ -13,7 +13,7 @@
 
     <style>
         :root {
-            --agent-color: #ff4757; /* Red for Agents */
+            --primary-color: #00ff88; /* Ninja Green */
             --bg-color: #121212;
             --card-bg: rgba(255, 255, 255, 0.05);
             --text-color: #ffffff;
@@ -21,18 +21,22 @@
             --android-green: #3ddc84;
         }
 
-        * { margin: 0; padding: 0; box-sizing: border-box; }
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
 
         body {
-            font-family: 'Padauk', sans-serif;
+            font-family: 'Padauk', sans-serif; /* Burmese Font */
             background-color: var(--bg-color);
             color: var(--text-color);
             display: flex;
             justify-content: center;
             align-items: center;
             min-height: 100vh;
-            /* Dark Red Gradient Background */
-            background-image: radial-gradient(circle at 50% 50%, #2c1a1c 0%, #121212 80%);
+            /* Green Radial Gradient Background */
+            background-image: radial-gradient(circle at 50% 50%, #1a2e25 0%, #121212 70%);
         }
 
         .container {
@@ -42,71 +46,166 @@
             text-align: center;
         }
 
-        /* Logo Area */
-        .logo-area { margin-bottom: 40px; display: flex; flex-direction: column; align-items: center; }
-
-        .agent-logo {
-            width: 120px; height: 120px; border-radius: 50%;
-            background: rgba(255, 71, 87, 0.1); 
-            border: 2px solid rgba(255, 71, 87, 0.3);
-            box-shadow: 0 0 60px rgba(255, 71, 87, 0.2);
-            display: flex; align-items: center; justify-content: center;
-            margin-bottom: 20px;
-            animation: pulse-red 3s infinite ease-in-out;
+        /* --- LOGO SECTION --- */
+        .logo-area {
+            margin-bottom: 40px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
         }
 
-        .agent-icon { font-size: 50px; color: var(--agent-color); }
+        .ninja-logo {
+            width: 120px;
+            height: 120px;
+            border-radius: 50%;
+            
+            /* Green Inner Background */
+            background: rgba(0, 255, 136, 0.1); 
+            border: 2px solid rgba(0, 255, 136, 0.3);
+            box-shadow: 0 0 60px rgba(0, 255, 136, 0.2);
+            
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 20px;
+            animation: logo-pulse 3s infinite ease-in-out;
+        }
+
+        .ninja-icon {
+            font-size: 50px;
+            color: var(--primary-color);
+            filter: drop-shadow(0 0 10px rgba(0, 255, 136, 0.6));
+        }
 
         h1 {
             font-family: 'Exo 2', sans-serif;
-            font-size: 28px; font-weight: 800; font-style: italic;
-            letter-spacing: 2px; text-transform: uppercase; margin-bottom: 5px;
-            background: linear-gradient(to bottom, #ff6b81, #ffffff);
-            -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+            font-size: 32px;
+            font-weight: 800;
+            font-style: italic;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            margin-bottom: 5px;
+            
+            /* Green Gradient Text */
+            background: linear-gradient(to bottom, #00FFA3, #ffffff);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            color: white; 
         }
 
-        .subtitle { color: var(--secondary-text); font-size: 14px; margin-top: 10px; }
+        .subtitle {
+            color: var(--secondary-text);
+            font-size: 14px;
+            line-height: 1.6;
+            margin-top: 10px;
+        }
 
-        /* Cards */
+        /* --- CARDS --- */
         .download-card {
             background: var(--card-bg);
             border: 1px solid rgba(255, 255, 255, 0.1);
-            border-radius: 16px; padding: 20px; margin-bottom: 20px;
-            text-align: left; transition: transform 0.2s;
-            border-left: 4px solid var(--agent-color);
+            border-radius: 16px;
+            padding: 20px;
+            margin-bottom: 20px;
+            transition: transform 0.2s, border-color 0.2s;
+            backdrop-filter: blur(10px);
+            text-align: left;
         }
-        .download-card:hover { transform: translateY(-3px); border-color: var(--agent-color); }
 
-        .card-header { display: flex; align-items: center; margin-bottom: 15px; }
-        .os-icon { font-size: 28px; margin-right: 15px; width: 30px; text-align: center; }
-        .card-info h3 { font-size: 18px; font-weight: bold; color: #fff; }
-        .card-info span { font-size: 12px; color: var(--secondary-text); }
+        .download-card:hover {
+            transform: translateY(-3px);
+            border-color: var(--primary-color);
+        }
 
-        /* Buttons */
+        .card-header {
+            display: flex;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+
+        .os-icon {
+            font-size: 32px;
+            margin-right: 15px;
+            width: 40px;
+            text-align: center;
+        }
+
+        .card-title {
+            font-size: 18px;
+            font-weight: bold;
+            color: #fff;
+            margin-bottom: 2px;
+        }
+
+        .version-info {
+            font-size: 12px;
+            color: var(--secondary-text);
+            display: block;
+        }
+
+        /* --- BUTTONS --- */
         .btn {
-            display: flex; align-items: center; justify-content: center; width: 100%;
-            padding: 12px; border-radius: 12px; text-decoration: none;
-            font-weight: bold; font-size: 16px; transition: all 0.3s ease;
-            margin-top: 10px; cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 100%;
+            padding: 12px;
+            border-radius: 12px;
+            text-decoration: none;
+            font-weight: bold;
+            font-size: 16px;
+            transition: all 0.3s ease;
+            cursor: pointer;
+            margin-top: 5px;
         }
 
+        /* Agent Green Button */
         .btn-download {
-            background: #fff; color: #000;
+            background: var(--primary-color);
+            color: #000; /* Black text on Green */
+            box-shadow: 0 4px 15px rgba(0, 255, 136, 0.3);
         }
-        .btn-download:hover { background: var(--agent-color); color: white; }
-
-        .btn-outline {
-            background: transparent; border: 1px solid rgba(255,255,255,0.2); color: #ccc;
+        .btn-download:hover { 
+            background: #00db75; 
+            box-shadow: 0 4px 20px rgba(0, 255, 136, 0.5);
         }
-        .btn-outline:hover { border-color: white; color: white; }
 
-        .note { font-size: 11px; color: var(--secondary-text); margin-top: 10px; text-align: center; }
-        footer { margin-top: 40px; font-size: 12px; color: #555; }
+        .btn-disabled {
+            background: rgba(255,255,255,0.1);
+            color: #777;
+            cursor: not-allowed;
+            border: 1px solid rgba(255,255,255,0.1);
+        }
 
-        @keyframes pulse-red {
-            0% { box-shadow: 0 0 60px rgba(255, 71, 87, 0.2); }
-            50% { box-shadow: 0 0 90px rgba(255, 71, 87, 0.5); }
-            100% { box-shadow: 0 0 60px rgba(255, 71, 87, 0.2); }
+        .note {
+            font-size: 12px;
+            color: var(--secondary-text);
+            margin-top: 12px;
+            text-align: center;
+        }
+
+        footer {
+            margin-top: 40px;
+            font-size: 12px;
+            color: #555;
+        }
+
+        @keyframes logo-pulse {
+            0% { box-shadow: 0 0 60px rgba(0, 255, 136, 0.2); }
+            50% { box-shadow: 0 0 80px rgba(0, 255, 136, 0.4); }
+            100% { box-shadow: 0 0 60px rgba(0, 255, 136, 0.2); }
+        }
+
+        .badge {
+            background: #24292e;
+            color: #fff;
+            padding: 2px 8px;
+            border-radius: 6px;
+            font-size: 10px;
+            border: 1px solid #444;
+            margin-left: 5px;
+            vertical-align: middle;
         }
     </style>
 </head>
@@ -114,44 +213,48 @@
 
     <div class="container">
         <div class="logo-area">
-            <div class="agent-logo">
-                <i class="fa-solid fa-user-shield agent-icon"></i>
+            <div class="ninja-logo">
+                <i class="fa-solid fa-user-shield ninja-icon"></i>
             </div>
-            <h1>VPN PORTAL <br> <span style="font-size: 0.7em; color: var(--agent-color);">AGENT</span></h1> 
-            <p class="subtitle">Reseller များအတွက် သီးသန့်အသုံးပြုရန်</p>
+
+            <h1>VPN PORTAL <br> <span style="font-size: 0.7em;">AGENT</span></h1> 
+
+            <p class="subtitle">Reseller များနှင့် ကိုယ်စားလှယ်များ သီးသန့်အသုံးပြုရန် စီမံခန့်ခွဲမှု Application</p>
         </div>
 
-        <div class="download-card" style="border-left-color: var(--android-green);">
+        <div class="download-card" style="border-left: 4px solid var(--android-green);">
             <div class="card-header">
                 <i class="fa-brands fa-android os-icon" style="color: var(--android-green);"></i>
-                <div class="card-info">
-                    <h3>Android Agent App</h3>
-                    <span>Latest APK Version</span>
+                <div>
+                    <div class="card-title">Android Agent App</div>
+                    <span class="version-info">Version 1.0.0 <span class="badge">APK</span></span>
                 </div>
             </div>
             
-            <a href="https://github.com/myothura/vpn-portal-agent/releases/latest/download/agent.apk" class="btn btn-download">
+            <a href="https://github.com/myothura/vpn-portal-agent/releases/download/v1.0.0/VPN.Portal.Agent.apk" class="btn btn-download">
                 <i class="fa-solid fa-download" style="margin-right: 10px;"></i> Download APK
             </a>
-            <p class="note">GitHub Releases မှ တိုက်ရိုက် Download ရယူပါ</p>
+            <p class="note">Download ခလုတ်ကိုနှိပ်ပြီး Install ပြုလုပ်နိုင်ပါပြီ။</p>
         </div>
 
-        <div class="download-card" style="border-left-color: #fff;">
+        <div class="download-card" style="border-left: 4px solid #555;">
             <div class="card-header">
-                <i class="fa-brands fa-apple os-icon" style="color: #fff;"></i>
-                <div class="card-info">
-                    <h3>iOS Agent App</h3>
-                    <span>Coming Soon</span>
+                <i class="fa-brands fa-apple os-icon" style="color: #888;"></i>
+                <div>
+                    <div class="card-title" style="color: #888;">iOS Agent App</div>
+                    <span class="version-info">Coming Soon</span>
                 </div>
             </div>
-            <a href="#" class="btn btn-outline" style="cursor: not-allowed; opacity: 0.5;">
-                <i class="fa-brands fa-app-store-ios" style="margin-right: 10px;"></i> Not Available Yet
+
+            <a href="#" class="btn btn-disabled">
+                <i class="fa-solid fa-ban" style="margin-right: 10px;"></i> Not Available Yet
             </a>
+            <p class="note">iOS ဗားရှင်း မကြာမီ လာပါမည်။</p>
         </div>
 
         <footer>
             <p>&copy; 2025 VPN Portal Team.</p>
-            <p>Authorized Personnel Only</p>
+            <p style="margin-top: 5px;">Authorized Agents Only</p>
         </footer>
     </div>
 
