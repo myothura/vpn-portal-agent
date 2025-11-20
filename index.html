@@ -14,6 +14,7 @@
     <style>
         :root {
             --primary-color: #00ff88; /* Ninja Green */
+            --ios-blue: #007AFF;      /* Apple Blue */
             --bg-color: #121212;
             --card-bg: rgba(255, 255, 255, 0.05);
             --text-color: #ffffff;
@@ -35,7 +36,6 @@
             justify-content: center;
             align-items: center;
             min-height: 100vh;
-            /* Green Radial Gradient Background */
             background-image: radial-gradient(circle at 50% 50%, #1a2e25 0%, #121212 70%);
         }
 
@@ -58,12 +58,9 @@
             width: 120px;
             height: 120px;
             border-radius: 50%;
-            
-            /* Green Inner Background */
             background: rgba(0, 255, 136, 0.1); 
             border: 2px solid rgba(0, 255, 136, 0.3);
             box-shadow: 0 0 60px rgba(0, 255, 136, 0.2);
-            
             display: flex;
             align-items: center;
             justify-content: center;
@@ -85,8 +82,6 @@
             letter-spacing: 2px;
             text-transform: uppercase;
             margin-bottom: 5px;
-            
-            /* Green Gradient Text */
             background: linear-gradient(to bottom, #00FFA3, #ffffff);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
@@ -144,6 +139,37 @@
             display: block;
         }
 
+        /* --- INSTRUCTIONS BOX --- */
+        .instruction-box {
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 8px;
+            padding: 12px;
+            margin-bottom: 15px;
+            font-size: 13px;
+        }
+        .instruction-step {
+            display: flex;
+            align-items: flex-start;
+            margin-bottom: 8px;
+            color: #ddd;
+        }
+        .instruction-step:last-child {
+            margin-bottom: 0;
+        }
+        .step-num {
+            background: rgba(255,255,255,0.2);
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 11px;
+            margin-right: 10px;
+            flex-shrink: 0;
+            margin-top: 2px;
+        }
+
         /* --- BUTTONS --- */
         .btn {
             display: flex;
@@ -160,22 +186,26 @@
             margin-top: 5px;
         }
 
-        /* Agent Green Button */
-        .btn-download {
+        /* Android Green Button */
+        .btn-android {
             background: var(--primary-color);
-            color: #000; /* Black text on Green */
+            color: #000;
             box-shadow: 0 4px 15px rgba(0, 255, 136, 0.3);
         }
-        .btn-download:hover { 
+        .btn-android:hover { 
             background: #00db75; 
             box-shadow: 0 4px 20px rgba(0, 255, 136, 0.5);
         }
 
-        .btn-disabled {
-            background: rgba(255,255,255,0.1);
-            color: #777;
-            cursor: not-allowed;
-            border: 1px solid rgba(255,255,255,0.1);
+        /* iOS Blue Button */
+        .btn-ios {
+            background: var(--ios-blue);
+            color: #fff;
+            box-shadow: 0 4px 15px rgba(0, 122, 255, 0.3);
+        }
+        .btn-ios:hover {
+            background: #0062cc;
+            box-shadow: 0 4px 20px rgba(0, 122, 255, 0.5);
         }
 
         .note {
@@ -227,29 +257,40 @@
                 <i class="fa-brands fa-android os-icon" style="color: var(--android-green);"></i>
                 <div>
                     <div class="card-title">Android Agent App</div>
-                    <span class="version-info">Version 1.0.0 <span class="badge">APK</span></span>
+                    <span class="version-info">Version 1.0.1 <span class="badge">Latest</span></span>
                 </div>
             </div>
             
-            <a href="https://github.com/myothura/vpn-portal-agent/releases/download/v1.0.0/VPN.Portal.Agent.apk" class="btn btn-download">
+            <a href="https://github.com/myothura/vpn-portal-agent/releases/download/v1.0.1/app-release.apk" class="btn btn-android">
                 <i class="fa-solid fa-download" style="margin-right: 10px;"></i> Download APK
             </a>
-            <p class="note">Download ခလုတ်ကိုနှိပ်ပြီး Install ပြုလုပ်နိုင်ပါပြီ။</p>
+            <p class="note">နောက်ဆုံးထွက် Version ကို ရယူပါ။</p>
         </div>
 
-        <div class="download-card" style="border-left: 4px solid #555;">
+        <div class="download-card" style="border-left: 4px solid var(--ios-blue);">
             <div class="card-header">
-                <i class="fa-brands fa-apple os-icon" style="color: #888;"></i>
+                <i class="fa-brands fa-apple os-icon" style="color: white;"></i>
                 <div>
-                    <div class="card-title" style="color: #888;">iOS Agent App</div>
-                    <span class="version-info">Coming Soon</span>
+                    <div class="card-title">iOS Agent App</div>
+                    <span class="version-info">Beta Version <span class="badge" style="background-color: var(--ios-blue); border:none;">TestFlight</span></span>
                 </div>
             </div>
 
-            <a href="#" class="btn btn-disabled">
-                <i class="fa-solid fa-ban" style="margin-right: 10px;"></i> Not Available Yet
+            <div class="instruction-box">
+                <div class="instruction-step">
+                    <div class="step-num">1</div>
+                    <div>App Store မှ <b>TestFlight</b> App ကို ဦးစွာ Install ပြုလုပ်ထားပါ။</div>
+                </div>
+                <div class="instruction-step">
+                    <div class="step-num">2</div>
+                    <div>ပြီးလျှင် အောက်ပါခလုတ်ကို နှိပ်ပြီး "Accept" လုပ်ပေးပါ။</div>
+                </div>
+            </div>
+
+            <a href="https://testflight.apple.com/join/eyEDzHMp" class="btn btn-ios">
+                <i class="fa-brands fa-app-store-ios" style="margin-right: 10px;"></i> Join Beta on TestFlight
             </a>
-            <p class="note">iOS ဗားရှင်း မကြာမီ လာပါမည်။</p>
+            <p class="note">iOS User များအတွက် စမ်းသပ်အဆင့်ဖြစ်သည်။</p>
         </div>
 
         <footer>
