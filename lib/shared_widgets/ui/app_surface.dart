@@ -24,6 +24,14 @@ class AppCard extends StatelessWidget {
   final bool showBorder;
   final bool showShadow;
 
+  /// Decorative pattern painted behind the content. Kept deliberately faint —
+  /// it should register as surface quality, not as an image.
+  final CardTexture texture;
+
+  /// Ink for the texture. Defaults to the accent on ink cards and to the
+  /// wash's own colour elsewhere.
+  final Color? textureColor;
+
   const AppCard({
     super.key,
     required this.child,
@@ -34,6 +42,8 @@ class AppCard extends StatelessWidget {
     this.onTap,
     this.showBorder = true,
     this.showShadow = true,
+    this.texture = CardTexture.none,
+    this.textureColor,
   });
 
   Color get _fill => switch (tone) {
@@ -53,9 +63,17 @@ class AppCard extends StatelessWidget {
     final shape = BorderRadius.circular(radius);
 
     final card = Container(
-      padding: padding,
       decoration: BoxDecoration(
-        color: _fill,
+        color: tone == SurfaceTone.ink ? null : _fill,
+        // Ink gets a slight vertical lift so a large dark panel does not read
+        // as one flat block.
+        gradient: tone == SurfaceTone.ink
+            ? const LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [AppColors.inkSurface, AppColors.ink],
+              )
+            : null,
         borderRadius: shape,
         border: showBorder ? Border.all(color: _line) : null,
         // Ink cards sit on their own weight; a shadow under them just muddies
@@ -63,7 +81,31 @@ class AppCard extends StatelessWidget {
         boxShadow:
             showShadow && tone != SurfaceTone.ink ? AppTheme.cardShadow : null,
       ),
-      child: child,
+      child: Stack(
+        children: [
+          if (texture != CardTexture.none)
+            // Clipped so the pattern stops at the corner radius, and wrapped
+            // in RepaintBoundary so it is rasterised once instead of being
+            // re-painted with the card's content.
+            Positioned.fill(
+              child: ClipRRect(
+                borderRadius: shape,
+                child: RepaintBoundary(
+                  child: CustomPaint(
+                    painter: _TexturePainter(
+                      texture: texture,
+                      color: textureColor ??
+                          (tone == SurfaceTone.ink
+                              ? AppColors.accent
+                              : AppColors.textPrimary),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          Padding(padding: padding, child: child),
+        ],
+      ),
     );
 
     if (onTap == null) return card;
@@ -290,6 +332,187 @@ class AppEmptyState extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// Surface patterns. Each is drawn with plain strokes or a gradient shader —
+/// no MaskFilter blur, which would cost a saveLayer per card per frame.
+enum CardTexture {
+  none,
+
+  /// Sparse dot grid. Reads as paper at a glance.
+  dots,
+
+  /// Concentric arcs anchored off one corner. Suits large cards.
+  rings,
+
+  /// Soft corner light. The cheapest of the four — one radial shader.
+  glow,
+}
+
+class _TexturePainter extends CustomPainter {
+  final CardTexture texture;
+  final Color color;
+
+  const _TexturePainter({required this.texture, required this.color});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    switch (texture) {
+      case CardTexture.none:
+        return;
+
+      case CardTexture.dots:
+        final paint = Paint()..color = color.withValues(alpha: 0.05);
+        const step = 14.0;
+        for (var y = step / 2; y < size.height; y += step) {
+          for (var x = step / 2; x < size.width; x += step) {
+            canvas.drawCircle(Offset(x, y), 1.1, paint);
+          }
+        }
+
+      case CardTexture.rings:
+        final paint = Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1
+          ..color = color.withValues(alpha: 0.10);
+        // Anchored beyond the top-right corner so only the arcs cross the
+        // card and the pattern never sits behind the reading line.
+        final centre = Offset(size.width * 0.94, -size.height * 0.15);
+        for (var r = size.height * 0.45; r < size.height * 1.7; r += 22) {
+          canvas.drawCircle(centre, r, paint);
+        }
+
+      case CardTexture.glow:
+        final rect = Offset.zero & size;
+        final paint = Paint()
+          ..shader = RadialGradient(
+            center: const Alignment(0.85, -0.85),
+            radius: 1.1,
+            colors: [color.withValues(alpha: 0.16), color.withValues(alpha: 0)],
+          ).createShader(rect);
+        canvas.drawRect(rect, paint);
+    }
+  }
+
+  // Nothing here depends on animation or scroll position, so the raster is
+  // reused for the life of the card.
+  @override
+  bool shouldRepaint(_TexturePainter old) =>
+      old.texture != texture || old.color != color;
+}
+
+/// Placeholder block with a travelling sheen, for use while real content
+/// loads. Sized and positioned to match what will replace it, so the layout
+/// does not jump when data arrives — which a centred spinner cannot do.
+class AppSkeleton extends StatefulWidget {
+  final double? width;
+  final double height;
+  final double radius;
+
+  const AppSkeleton({
+    super.key,
+    this.width,
+    this.height = 14,
+    this.radius = 6,
+  });
+
+  @override
+  State<AppSkeleton> createState() => _AppSkeletonState();
+}
+
+class _AppSkeletonState extends State<AppSkeleton>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _c;
+
+  @override
+  void initState() {
+    super.initState();
+    _c = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1200),
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return RepaintBoundary(
+      child: AnimatedBuilder(
+        animation: _c,
+        builder: (context, _) {
+          // The gradient slides across a fixed box rather than the box moving,
+          // so nothing is laid out again per frame.
+          final t = _c.value * 2 - 1;
+          return Container(
+            width: widget.width,
+            height: widget.height,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(widget.radius),
+              gradient: LinearGradient(
+                begin: Alignment(-1 + t, 0),
+                end: Alignment(1 + t, 0),
+                colors: const [
+                  AppColors.surfaceAlt,
+                  AppColors.border,
+                  AppColors.surfaceAlt,
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+/// Number that counts from its previous value to its new one.
+///
+/// The dashboard repolls every 30 seconds and figures used to snap, so a
+/// change was indistinguishable from a rebuild. Animating the transition is
+/// what makes "this just moved" legible without a badge or a flash.
+class AppAnimatedNumber extends StatelessWidget {
+  final int value;
+  final TextStyle? style;
+  final Duration duration;
+
+  /// Formats the interpolated value. Pass the same formatter the static text
+  /// would have used, or the number will change shape mid-count.
+  final String Function(int)? format;
+
+  const AppAnimatedNumber({
+    super.key,
+    required this.value,
+    this.style,
+    this.duration = const Duration(milliseconds: 650),
+    this.format,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return TweenAnimationBuilder<double>(
+      // Only `end` is set. TweenAnimationBuilder fills `begin` with the
+      // previous end on rebuild, so each new figure counts up from the one
+      // before it. Setting begin == end (as is easy to do here) silently
+      // disables the animation: the tween has nowhere to travel.
+      tween: Tween<double>(end: value.toDouble()),
+      duration: duration,
+      curve: Curves.easeOutCubic,
+      builder: (context, v, _) {
+        final n = v.round();
+        return Text(
+          format?.call(n) ?? '$n',
+          style: style,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        );
+      },
     );
   }
 }

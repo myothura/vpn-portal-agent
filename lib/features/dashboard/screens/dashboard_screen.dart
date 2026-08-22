@@ -2,7 +2,9 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:hive_flutter/hive_flutter.dart';
 import 'package:iconsax/iconsax.dart';
+import 'package:intl/intl.dart';
 
 import 'package:vpn_agent_app/core/theme/app_colors.dart';
 import 'package:vpn_agent_app/core/theme/app_theme.dart';
@@ -130,6 +132,14 @@ class _DashboardViewState extends State<_DashboardView> {
               _ => null,
             };
 
+            // Anything not freshly fetched is flagged: cache on cold start, a
+            // failed background poll, or an error we are riding out on cache.
+            final isStale = switch (state) {
+              DashboardLoaded s => s.isStale,
+              DashboardError _ => true,
+              _ => false,
+            };
+
             // Only a cold start with nothing cached is a blocking state.
             if (stats == null) {
               if (state is DashboardError) {
@@ -142,7 +152,7 @@ class _DashboardViewState extends State<_DashboardView> {
                       context.read<DashboardBloc>().add(DashboardStarted()),
                 );
               }
-              return const AppLoader();
+              return const _DashboardSkeleton();
             }
 
             return RefreshIndicator(
@@ -155,6 +165,10 @@ class _DashboardViewState extends State<_DashboardView> {
                   parent: BouncingScrollPhysics(),
                 ),
                 children: [
+                  if (isStale) ...[
+                    const _StaleStrip(),
+                    const SizedBox(height: 12),
+                  ],
                   _Header(
                     stats: stats,
                     onNotifications: () => _open(const NotificationScreen()),
@@ -197,6 +211,108 @@ class _DashboardViewState extends State<_DashboardView> {
   }
 }
 
+/// Cold-start placeholder. Mirrors the real layout — header, banner, balance,
+/// two rows of tiles — so the page does not reflow when the data lands.
+class _DashboardSkeleton extends StatelessWidget {
+  const _DashboardSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    Widget tile() => const AppCard(
+          padding: EdgeInsets.all(14),
+          radius: AppTheme.radiusMd,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              AppSkeleton(width: 30, height: 30, radius: 9),
+              SizedBox(height: 12),
+              AppSkeleton(width: 64, height: 26),
+              SizedBox(height: 6),
+              AppSkeleton(width: 88, height: 11),
+            ],
+          ),
+        );
+
+    Widget row() => IntrinsicHeight(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Expanded(child: tile()),
+              const SizedBox(width: 12),
+              Expanded(child: tile()),
+            ],
+          ),
+        );
+
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+      physics: const NeverScrollableScrollPhysics(),
+      children: [
+        Row(
+          children: [
+            const Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  AppSkeleton(width: 110, height: 12),
+                  SizedBox(height: 8),
+                  AppSkeleton(width: 150, height: 28),
+                ],
+              ),
+            ),
+            const AppSkeleton(width: 40, height: 40, radius: AppTheme.radiusSm),
+            const SizedBox(width: 8),
+            const AppSkeleton(width: 40, height: 40, radius: AppTheme.radiusSm),
+          ],
+        ),
+        const SizedBox(height: 16),
+        const AppSkeleton(height: 54, radius: AppTheme.radiusMd),
+        const SizedBox(height: 16),
+        const AppSkeleton(height: 168, radius: AppTheme.radiusXl),
+        const SizedBox(height: 24),
+        const AppSkeleton(width: 96, height: 16),
+        const SizedBox(height: 12),
+        row(),
+        const SizedBox(height: 12),
+        row(),
+      ],
+    );
+  }
+}
+
+/// Shown whenever the figures on screen are not known to be current.
+///
+/// Without it a failed poll is silent: the previous numbers stay up and read
+/// as live. On a screen whose whole purpose is counts an agent acts on, that
+/// is worse than showing nothing.
+class _StaleStrip extends StatelessWidget {
+  const _StaleStrip();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: AppColors.surfaceAlt,
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Iconsax.cloud_cross, size: 14, color: AppColors.textTertiary),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              'Showing saved data — pull down to refresh',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 // ── Header ────────────────────────────────────────────────────────────────
 
 class _Header extends StatelessWidget {
@@ -215,7 +331,10 @@ class _Header extends StatelessWidget {
     final t = Theme.of(context).textTheme;
 
     return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
+      // The greeting is two lines and the controls are one, so `start` pinned
+      // the pill and buttons to the top of the tallest child. They belong on
+      // the same optical line as each other, centred against the block.
+      crossAxisAlignment: CrossAxisAlignment.center,
       children: [
         Expanded(
           child: Column(
@@ -349,14 +468,39 @@ class _RequestTickerState extends State<_RequestTicker> {
 
 // ── Balance ───────────────────────────────────────────────────────────────
 
-class _BalanceCard extends StatelessWidget {
+class _BalanceCard extends StatefulWidget {
   final DashboardStats stats;
   final VoidCallback onHistory;
 
   const _BalanceCard({required this.stats, required this.onHistory});
 
   @override
+  State<_BalanceCard> createState() => _BalanceCardState();
+}
+
+class _BalanceCardState extends State<_BalanceCard> {
+  /// Persisted, not per-session: an agent who hides their balance in a shop
+  /// wants it to stay hidden the next time they open the app, not to have it
+  /// flash on screen at every launch.
+  static const _hiddenKey = 'balance_hidden';
+
+  late bool _hidden;
+
+  @override
+  void initState() {
+    super.initState();
+    _hidden = Hive.box('app_cache').get(_hiddenKey, defaultValue: false) as bool;
+  }
+
+  void _toggle() {
+    setState(() => _hidden = !_hidden);
+    Hive.box('app_cache').put(_hiddenKey, _hidden);
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final stats = widget.stats;
+    final onHistory = widget.onHistory;
     final t = Theme.of(context).textTheme;
 
     // The one ink card on the page. Balance is the number an agent checks
@@ -365,6 +509,9 @@ class _BalanceCard extends StatelessWidget {
       tone: SurfaceTone.ink,
       padding: const EdgeInsets.all(20),
       radius: AppTheme.radiusXl,
+      // Arcs are anchored past the top-right corner, so they cross the empty
+      // area beside the label and never sit behind the balance figure.
+      texture: CardTexture.rings,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -379,28 +526,85 @@ class _BalanceCard extends StatelessWidget {
               const Spacer(),
               // Was a decorative pill with no action; now it is the entry
               // point to credit history, which is what people tapped it for.
-              TextButton(
-                onPressed: onHistory,
-                style: TextButton.styleFrom(
-                  foregroundColor: AppColors.accent,
-                  padding: const EdgeInsets.symmetric(horizontal: 10),
-                  minimumSize: Size.zero,
-                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              //
+              // Drawn as a raised pill rather than a text link: bare text on
+              // the ink card was the same weight as the label beside it, so
+              // nothing marked it as tappable. The lighter fill and the
+              // chevron are what say "this goes somewhere".
+              Material(
+                color: AppColors.textOnInk.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(999),
+                child: InkWell(
+                  onTap: onHistory,
+                  borderRadius: BorderRadius.circular(999),
+                  splashColor: AppColors.textOnInk.withValues(alpha: 0.12),
+                  child: Padding(
+                    padding:
+                        const EdgeInsets.only(left: 12, right: 8, top: 6, bottom: 6),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          'History',
+                          style: t.bodySmall?.copyWith(
+                            color: AppColors.textOnInk,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        const SizedBox(width: 2),
+                        Icon(
+                          Icons.chevron_right_rounded,
+                          size: 16,
+                          color: AppColors.textOnInk.withValues(alpha: 0.8),
+                        ),
+                      ],
+                    ),
+                  ),
                 ),
-                child: const Text('History'),
               ),
             ],
           ),
           const SizedBox(height: 10),
-          FittedBox(
-            fit: BoxFit.scaleDown,
-            alignment: Alignment.centerLeft,
-            child: Text(
-              stats.formattedCreditBalance,
-              style: t.displaySmall?.copyWith(
-                color: AppColors.textOnInk,
-                fontSize: 34,
-              ),
+          // The whole figure is the hit target — a small eye icon beside a
+          // number this large is a fiddly thing to aim at one-handed.
+          GestureDetector(
+            onTap: _toggle,
+            behavior: HitTestBehavior.opaque,
+            child: Row(
+              children: [
+                Flexible(
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.centerLeft,
+                    child: _hidden
+                        // Not an AppAnimatedNumber while masked: counting dots
+                        // up to a hidden figure would be absurd, and the mask
+                        // must not leak the magnitude through its width.
+                        ? Text(
+                            '••••••••',
+                            style: t.displaySmall?.copyWith(
+                              color: AppColors.textOnInk,
+                              fontSize: 34,
+                              letterSpacing: 2,
+                            ),
+                          )
+                        : AppAnimatedNumber(
+                            value: stats.creditBalance,
+                            format: (n) => NumberFormat('#,##0').format(n),
+                            style: t.displaySmall?.copyWith(
+                              color: AppColors.textOnInk,
+                              fontSize: 34,
+                            ),
+                          ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Icon(
+                  _hidden ? Iconsax.eye_slash : Iconsax.eye,
+                  size: 18,
+                  color: AppColors.textOnInk.withValues(alpha: 0.5),
+                ),
+              ],
             ),
           ),
           const SizedBox(height: 16),
@@ -422,7 +626,9 @@ class _BalanceCard extends StatelessWidget {
               ),
               const Spacer(),
               Text(
-                stats.formattedCreditsSpent,
+                // Follows the same toggle: leaving spend visible while the
+                // balance is masked gives away the same information.
+                _hidden ? '••••' : stats.formattedCreditsSpent,
                 style: t.bodyLarge?.copyWith(
                   color: AppColors.textOnInk,
                   fontWeight: FontWeight.w700,
@@ -452,7 +658,7 @@ class _StatsGrid extends StatelessWidget {
       // total that changes slowly and needs no action.
       AppStatTile(
         label: 'Expiring in 7 days',
-        value: '${stats.expiringSoonCount}',
+        value: stats.expiringSoonCount,
         icon: Iconsax.timer_1,
         color: AppColors.warning,
         wash: AppColors.warningWash,
@@ -462,7 +668,7 @@ class _StatsGrid extends StatelessWidget {
       ),
       AppStatTile(
         label: 'Active',
-        value: '${stats.activeUserCount}',
+        value: stats.activeUserCount,
         icon: Iconsax.tick_circle,
         color: AppColors.success,
         wash: AppColors.successWash,
@@ -470,18 +676,18 @@ class _StatsGrid extends StatelessWidget {
       ),
       AppStatTile(
         label: 'Total users',
-        value: '${stats.totalUserCount}',
+        value: stats.totalUserCount,
         icon: Iconsax.profile_2user,
-        color: AppColors.info,
-        wash: AppColors.infoWash,
+        color: AppColors.neutral,
+        wash: AppColors.neutralWash,
         onTap: () => onOpen(const UserManagementScreen(initialFilter: 'all')),
       ),
       AppStatTile(
         label: 'Business',
-        value: '${stats.businessUserCount}',
+        value: stats.businessUserCount,
         icon: Iconsax.briefcase,
-        color: AppColors.orange,
-        wash: AppColors.orangeWash,
+        color: AppColors.neutral,
+        wash: AppColors.neutralWash,
         onTap: () =>
             onOpen(const UserManagementScreen(initialFilter: 'business')),
       ),

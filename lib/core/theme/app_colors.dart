@@ -63,9 +63,17 @@ class AppColors {
   static const Color cyanWash = Color(0xFFCFFAFE);
 
   // ── Ink (high-emphasis card on a light page) ──
-  static const Color ink = Color(0xFF17181C);
-  static const Color inkSurface = Color(0xFF23252B);
-  static const Color textOnInk = Color(0xFFF5F6F8);
+  // Deep brand green rather than neutral black. This is the largest single
+  // element on the dashboard, so a black panel made the app read as generic —
+  // the brand colour only appeared on a nav label and one text link.
+  static const Color ink = Color(0xFF0A3B22);
+  static const Color inkSurface = Color(0xFF125233);
+  static const Color textOnInk = Color(0xFFF2FBF5);
+
+  /// Neutral tile accent, for metrics that are context rather than a call to
+  /// action. Keeps the palette from competing with the brand green.
+  static const Color neutral = Color(0xFF56606E);
+  static const Color neutralWash = Color(0xFFEDEFF2);
 
   // ── Deprecated dark-build aliases ──
   // Kept only so the not-yet-migrated screens still compile. Each screen drops

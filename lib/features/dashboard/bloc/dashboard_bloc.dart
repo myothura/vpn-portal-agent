@@ -38,9 +38,21 @@ class DashboardLoading extends DashboardState {
 
 class DashboardLoaded extends DashboardState {
   final DashboardStats stats;
-  DashboardLoaded(this.stats);
+
+  /// When these numbers were actually fetched. Needed because a silent
+  /// background failure leaves the previous state on screen indefinitely —
+  /// the agent had no way to tell a live figure from a stale one.
+  final DateTime fetchedAt;
+
+  /// True once a background poll has failed. The stats stay on screen; the UI
+  /// just stops presenting them as current.
+  final bool isStale;
+
+  DashboardLoaded(this.stats, {DateTime? fetchedAt, this.isStale = false})
+      : fetchedAt = fetchedAt ?? DateTime.now();
+
   @override
-  List<Object?> get props => [stats];
+  List<Object?> get props => [stats, fetchedAt, isStale];
 }
 
 class DashboardError extends DashboardState {
@@ -73,7 +85,9 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
     // 1. Show Cache First (Instant Load)
     final cachedData = _repository.getCachedStats();
     if (cachedData != null) {
-      emit(DashboardLoaded(cachedData));
+      // Cache is shown instantly but flagged stale until the network answers —
+      // it may be days old.
+      emit(DashboardLoaded(cachedData, isStale: true));
     } else {
       emit(DashboardLoading());
     }
@@ -116,7 +130,18 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
       final stats = await _repository.fetchDashboardStats();
       emit(DashboardLoaded(stats));
     } catch (e) {
-      // Background fetch ဆိုရင် Error မပြဘူး (User အနှောင့်အယှက်မဖြစ်အောင်)
+      // A background failure must not throw the agent to an error screen, but
+      // it must not be invisible either: keep the numbers, flag them stale.
+      if (isBackground) {
+        final current = state;
+        if (current is DashboardLoaded && !current.isStale) {
+          emit(DashboardLoaded(
+            current.stats,
+            fetchedAt: current.fetchedAt,
+            isStale: true,
+          ));
+        }
+      }
       if (!isBackground) {
         final currentStats = state is DashboardLoaded
             ? (state as DashboardLoaded).stats

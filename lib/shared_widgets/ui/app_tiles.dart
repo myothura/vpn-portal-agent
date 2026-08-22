@@ -11,7 +11,9 @@ import 'package:vpn_agent_app/shared_widgets/ui/app_surface.dart';
 /// if missed — read the same as "Total Users".
 class AppStatTile extends StatelessWidget {
   final String label;
-  final String value;
+
+  /// Numeric so the tile can count between values. Stats are always counts.
+  final int value;
   final IconData icon;
   final Color color;
   final Color wash;
@@ -38,6 +40,10 @@ class AppStatTile extends StatelessWidget {
       radius: AppTheme.radiusMd,
       tone: emphasis ? SurfaceTone.wash : SurfaceTone.plain,
       washColor: emphasis ? wash : null,
+      // Only the tile that wants attention is textured. On all four it would
+      // read as noise and the emphasis would be lost.
+      texture: emphasis ? CardTexture.dots : CardTexture.none,
+      textureColor: emphasis ? color : null,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
@@ -59,10 +65,8 @@ class AppStatTile extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 12),
-          Text(
-            value,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
+          AppAnimatedNumber(
+            value: value,
             style: t.headlineMedium?.copyWith(
               color: emphasis ? color : AppColors.textPrimary,
             ),
@@ -204,11 +208,21 @@ class AppStatusBanner extends StatelessWidget {
       tone: SurfaceTone.wash,
       washColor: wash,
       showShadow: false,
+      texture: CardTexture.glow,
+      textureColor: color,
       radius: AppTheme.radiusMd,
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       child: Row(
         children: [
-          Icon(icon, size: 18, color: color),
+          // Solid disc rather than a bare glyph: on a wash background a
+          // same-hue icon has almost no contrast and the banner reads as a
+          // block of colour instead of an alert.
+          Container(
+            width: 30,
+            height: 30,
+            decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+            child: Icon(icon, size: 15, color: AppColors.textOnAccent),
+          ),
           const SizedBox(width: 10),
           Expanded(
             child: Text(
