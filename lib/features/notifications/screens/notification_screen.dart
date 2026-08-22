@@ -7,6 +7,7 @@ import 'package:vpn_agent_app/core/api/api_client.dart';
 import 'package:vpn_agent_app/core/api/api_config.dart';
 import 'package:vpn_agent_app/core/navigation/app_transitions.dart';
 import 'package:vpn_agent_app/core/theme/app_colors.dart';
+import 'package:vpn_agent_app/features/scaffold/main_scaffold.dart';
 import 'package:vpn_agent_app/core/theme/app_theme.dart';
 import 'package:vpn_agent_app/shared_widgets/ui/app_surface.dart';
 
@@ -162,6 +163,32 @@ class _NotificationScreenState extends State<NotificationScreen> {
     _toast('Could not delete it.');
   }
 
+  /// Marks the notification read, then goes where its payload points.
+  ///
+  /// The server writes a `screen` key for exactly this. Without it a renewal
+  /// notification was a dead end — the agent read "Renewal Request" and then
+  /// navigated to the Requests tab by hand.
+  Future<void> _openNotification(NotificationModel item) async {
+    await _markRead(item);
+    if (!mounted) return;
+
+    final shell = MainShell.of(context);
+    final destination = switch (item.screen) {
+      'renewal_requests' => 'Requests',
+      'chat' || 'home' => 'Chat',
+      _ => null,
+    };
+
+    // No destination in the payload, or no shell above this route: reading it
+    // is all there is to do.
+    if (destination == null || shell == null) return;
+
+    // Popped first — the tab lives in the shell underneath, and pushing over
+    // this screen would leave two ways back to the same place.
+    Navigator.of(context).pop();
+    shell.goToTab(destination);
+  }
+
   void _toast(String message) {
     ScaffoldMessenger.of(
       context,
@@ -218,7 +245,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
                     child: _NotificationCard(
                       key: ValueKey(item.id),
                       item: item,
-                      onTap: () => _markRead(item),
+                      onTap: () => _openNotification(item),
                       onDelete: () => _delete(item),
                     ),
                   );
