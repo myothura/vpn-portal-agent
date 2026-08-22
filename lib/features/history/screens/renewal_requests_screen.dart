@@ -1,121 +1,74 @@
-import 'dart:async';
 import 'dart:ui';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:iconsax/iconsax.dart';
 import 'package:intl/intl.dart';
+
 import 'package:vpn_agent_app/core/theme/app_colors.dart';
+import 'package:vpn_agent_app/core/theme/app_theme.dart';
+import 'package:vpn_agent_app/shared_widgets/ui/app_surface.dart';
+
 import 'package:vpn_agent_app/features/history/models/renewal_request_model.dart';
 import 'package:vpn_agent_app/features/history/services/renewal_service.dart';
 
-class LiquidGlassContainer extends StatelessWidget {
-  final Widget child;
-  final double blurSigma;
-  final double opacity;
-  final BorderRadius? borderRadius;
-  final EdgeInsetsGeometry padding;
-  final Color? tintColor;
-  final bool withBorder;
-  final VoidCallback? onTap;
+/// How a request type is presented. The backend already labels each request;
+/// this only supplies the colour and icon that distinguish a device-slot
+/// purchase from a plan renewal at a glance down a list.
+class _RequestKind {
+  final IconData icon;
+  final Color color;
+  final Color wash;
+  final String label;
 
-  const LiquidGlassContainer({
-    super.key,
-    required this.child,
-    this.blurSigma = 20.0,
-    this.opacity = 0.08,
-    this.borderRadius,
-    this.padding = EdgeInsets.zero,
-    this.tintColor,
-    this.withBorder = true,
-    this.onTap,
-  });
+  const _RequestKind(this.icon, this.color, this.wash, this.label);
 
-  @override
-  Widget build(BuildContext context) {
-    final radius = borderRadius ?? BorderRadius.circular(24);
-    Widget content = ClipRRect(
-      borderRadius: radius,
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: blurSigma, sigmaY: blurSigma),
-        child: Container(
-          padding: padding,
-          decoration: BoxDecoration(
-            color: (tintColor ?? Colors.white).withOpacity(opacity),
-            borderRadius: radius,
-            border: withBorder
-                ? Border.all(color: Colors.white.withOpacity(0.12), width: 1.0)
-                : null,
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [
-                (tintColor ?? Colors.white).withOpacity(opacity + 0.05),
-                (tintColor ?? Colors.white).withOpacity(opacity),
-              ],
-            ),
-          ),
-          child: child,
-        ),
-      ),
-    );
-    if (onTap != null) {
-      return GestureDetector(onTap: onTap, child: content);
-    }
-    return content;
-  }
+  static _RequestKind of(String type) => switch (type) {
+    'device_slot' => const _RequestKind(
+      Iconsax.mobile,
+      AppColors.info,
+      AppColors.infoWash,
+      'Device slot',
+    ),
+    'business_plan' => const _RequestKind(
+      Iconsax.briefcase,
+      AppColors.orange,
+      AppColors.orangeWash,
+      'Business plan',
+    ),
+    _ => const _RequestKind(
+      Iconsax.refresh_circle,
+      AppColors.accentInk,
+      AppColors.accentWash,
+      'Renewal',
+    ),
+  };
 }
 
-class ScaleButton extends StatefulWidget {
-  final Widget child;
-  final VoidCallback? onTap;
-  final double scaleAmount;
-  const ScaleButton({
-    super.key,
-    required this.child,
-    required this.onTap,
-    this.scaleAmount = 0.95,
-  });
-  @override
-  State<ScaleButton> createState() => _ScaleButtonState();
-}
+class _StatusStyle {
+  final Color color;
+  final Color wash;
+  final String label;
 
-class _ScaleButtonState extends State<ScaleButton>
-    with SingleTickerProviderStateMixin {
-  late AnimationController _controller;
-  late Animation<double> _scaleAnimation;
-  @override
-  void initState() {
-    super.initState();
-    _controller = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 100),
-    );
-    _scaleAnimation = Tween<double>(
-      begin: 1.0,
-      end: widget.scaleAmount,
-    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeInOut));
-  }
+  const _StatusStyle(this.color, this.wash, this.label);
 
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTapDown: (_) => _controller.forward(),
-      onTapUp: (_) {
-        _controller.reverse();
-        widget.onTap?.call();
-        HapticFeedback.lightImpact();
-      },
-      onTapCancel: () => _controller.reverse(),
-      child: ScaleTransition(scale: _scaleAnimation, child: widget.child),
-    );
-  }
+  static _StatusStyle of(String status) => switch (status) {
+    'approved' => const _StatusStyle(
+      AppColors.success,
+      AppColors.successWash,
+      'Approved',
+    ),
+    'rejected' => const _StatusStyle(
+      AppColors.danger,
+      AppColors.dangerWash,
+      'Rejected',
+    ),
+    _ => const _StatusStyle(
+      AppColors.warning,
+      AppColors.warningWash,
+      'Pending',
+    ),
+  };
 }
 
 class RenewalRequestsScreen extends StatefulWidget {
@@ -126,1096 +79,792 @@ class RenewalRequestsScreen extends StatefulWidget {
 }
 
 class _RenewalRequestsScreenState extends State<RenewalRequestsScreen> {
-  Completer<void>? _refreshCompleter;
-  Future<RenewalRequestResponse?>? _requestsFuture;
-  final RenewalRequestService _renewalService = RenewalRequestService();
+  final _service = RenewalRequestService();
+  final _scrollController = ScrollController();
 
-  bool _isProcessing = false;
-  String _filter = 'all';
+  List<RenewalRequest> _requests = [];
+  Map<String, int> _counts = {};
+
+  /// null means "all". Sent to the server rather than applied here: the screen
+  /// holds one page of twenty out of thousands, so filtering locally searched
+  /// only the most recent twenty and could show nothing while hundreds
+  /// matched.
+  String? _filter = 'pending';
+
+  bool _loading = true;
+  bool _loadingMore = false;
+  int _page = 1;
+  int _lastPage = 1;
+
+  /// Ids currently being approved or rejected, so a row can show its own
+  /// progress instead of an overlay blocking the whole list.
+  final Set<int> _busyIds = {};
+
+  // Each tab wears the colour of the status it selects, so the chip row and
+  // the badges on the cards below it agree.
+  static const _tabs = <(String?, String, Color)>[
+    ('pending', 'Pending', AppColors.warning),
+    ('approved', 'Approved', AppColors.success),
+    ('rejected', 'Rejected', AppColors.danger),
+    (null, 'All', AppColors.accentInk),
+  ];
 
   @override
   void initState() {
     super.initState();
-    _loadRequests();
+    _scrollController.addListener(_onScroll);
+    _load(refresh: true);
   }
 
-  Future<void> _loadRequests() async {
-    if (!mounted) return;
-    setState(() {
-      _requestsFuture = _renewalService.getRenewalRequests();
-    });
-    await _requestsFuture;
-    if (mounted &&
-        _refreshCompleter != null &&
-        !_refreshCompleter!.isCompleted) {
-      _refreshCompleter!.complete();
-      _refreshCompleter = null;
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  void _onScroll() {
+    if (!_scrollController.hasClients) return;
+    final p = _scrollController.position;
+    if (p.pixels >= p.maxScrollExtent - 600) _loadMore();
+  }
+
+  Future<void> _load({bool refresh = false}) async {
+    if (refresh) {
+      setState(() {
+        _loading = true;
+        _page = 1;
+        _requests = [];
+      });
     }
+
+    final response = await _service.getRenewalRequests(
+      page: _page,
+      status: _filter,
+    );
+    if (!mounted) return;
+
+    setState(() {
+      if (response != null) {
+        _requests = refresh
+            ? response.requests
+            : [..._requests, ...response.requests];
+        _lastPage = response.lastPage;
+        if (response.counts.isNotEmpty) _counts = response.counts;
+      }
+      _loading = false;
+      _loadingMore = false;
+    });
   }
 
-  Future<void> _onRefresh() async {
-    _refreshCompleter = Completer<void>();
-    _loadRequests();
-    return _refreshCompleter!.future;
+  Future<void> _loadMore() async {
+    if (_loadingMore || _loading || _page >= _lastPage) return;
+    setState(() => _loadingMore = true);
+    _page++;
+    await _load();
   }
 
-  List<RenewalRequest> _applyFilter(List<RenewalRequest> requests) {
-    if (_filter == 'all') return requests;
-    return requests.where((r) => r.status == _filter).toList();
+  void _onFilterChanged(String? status) {
+    if (_filter == status) return;
+    HapticFeedback.selectionClick();
+    setState(() => _filter = status);
+    _load(refresh: true);
   }
+
+  // ── Decisions ──
+
+  Future<void> _approve(RenewalRequest request) async {
+    final confirmed = await _confirm(
+      title: 'Approve this request?',
+      body:
+          '${request.vpnUserName} — ${request.subtitle}\n\n'
+          'Credit will be deducted from your balance.',
+      actionLabel: 'Approve',
+      actionColor: AppColors.accentInk,
+    );
+    if (confirmed != true) return;
+
+    setState(() => _busyIds.add(request.id));
+    final ok = await _service.approveRequest(request.id);
+    if (!mounted) return;
+    setState(() => _busyIds.remove(request.id));
+
+    _toast(ok ? 'Request approved.' : 'Could not approve. Check your balance.');
+    if (ok) _load(refresh: true);
+  }
+
+  Future<void> _reject(RenewalRequest request) async {
+    final controller = TextEditingController();
+    final reason = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        icon: const AppIconBadge(
+          icon: Iconsax.close_circle,
+          color: AppColors.danger,
+          background: AppColors.dangerWash,
+          size: 22,
+          padding: 12,
+        ),
+        title: const Text('Reject this request?'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '${request.vpnUserName} — ${request.subtitle}',
+              style: Theme.of(ctx).textTheme.bodyMedium,
+            ),
+            const SizedBox(height: 14),
+            TextField(
+              controller: controller,
+              autofocus: true,
+              maxLines: 2,
+              decoration: const InputDecoration(
+                hintText: 'Reason (shown to the user)',
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: AppColors.danger),
+            // A reason is required: the user sees this, and "rejected" with no
+            // explanation just becomes a support message the agent answers by
+            // hand anyway.
+            onPressed: () => Navigator.pop(ctx, controller.text.trim()),
+            child: const Text('Reject'),
+          ),
+        ],
+      ),
+    );
+
+    if (reason == null || reason.isEmpty || !mounted) {
+      if (reason != null && reason.isEmpty) _toast('Add a reason to reject.');
+      return;
+    }
+
+    setState(() => _busyIds.add(request.id));
+    final ok = await _service.rejectRequest(request.id, reason);
+    if (!mounted) return;
+    setState(() => _busyIds.remove(request.id));
+
+    _toast(ok ? 'Request rejected.' : 'Could not reject the request.');
+    if (ok) _load(refresh: true);
+  }
+
+  Future<bool?> _confirm({
+    required String title,
+    required String body,
+    required String actionLabel,
+    required Color actionColor,
+  }) {
+    return showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(title),
+        content: Text(body, style: Theme.of(ctx).textTheme.bodyMedium),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: actionColor),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(actionLabel),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _toast(String message) {
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  void _viewScreenshot(RenewalRequest request) {
+    if (request.screenshotUrl.isEmpty) {
+      _toast('No payment screenshot was attached.');
+      return;
+    }
+    Navigator.of(context).push(
+      // opaque: false so the list stays rendered underneath for the blur to
+      // sample; a normal route would leave nothing there to blur.
+      PageRouteBuilder(
+        opaque: false,
+        barrierDismissible: true,
+        barrierColor: Colors.transparent,
+        transitionDuration: const Duration(milliseconds: 220),
+        pageBuilder: (_, __, ___) => _ScreenshotViewer(
+          url: request.screenshotUrl,
+          title: request.vpnUserName,
+        ),
+        transitionsBuilder: (_, animation, __, child) =>
+            FadeTransition(opacity: animation, child: child),
+      ),
+    );
+  }
+
+  // ── Build ──
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppColors.darkBackground,
-      extendBodyBehindAppBar: true,
-      appBar: AppBar(
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        centerTitle: true,
-        leading: IconButton(
-          icon: Container(
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.05),
-              shape: BoxShape.circle,
-            ),
-            child: const Icon(
-              Iconsax.arrow_left_2,
-              color: Colors.white,
-              size: 20,
-            ),
-          ),
-          onPressed: () => Navigator.pop(context),
-        ),
-        title: Text(
-          "Renewal Requests",
-          style: GoogleFonts.exo2(
-            color: Colors.white,
-            fontWeight: FontWeight.bold,
-            fontSize: 18,
-            letterSpacing: 1.0,
-          ),
-        ),
-      ),
-      body: Stack(
-        children: [
-          Positioned.fill(
-            child: Container(
-              decoration: const BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  colors: [Color(0xFF0F0F10), Color(0xFF18181C)],
-                ),
-              ),
-            ),
-          ),
-          Positioned.fill(
-            child: SafeArea(
-              child: FutureBuilder<RenewalRequestResponse?>(
-                future: _requestsFuture,
-                builder: (context, snapshot) {
-                  if (snapshot.connectionState == ConnectionState.waiting) {
-                    return Column(
-                      children: [
-                        const SizedBox(height: 10),
-                        _buildFilterTabs(0, 0, 0),
-                        const SizedBox(height: 12),
-                        Expanded(child: _buildShimmer()),
-                      ],
-                    );
-                  }
-                  if (snapshot.hasError ||
-                      !snapshot.hasData ||
-                      snapshot.data!.requests.isEmpty) {
-                    return Column(
-                      children: [
-                        const SizedBox(height: 10),
-                        _buildFilterTabs(0, 0, 0),
-                        Expanded(child: _buildEmptyState()),
-                      ],
-                    );
-                  }
-
-                  final allRequests = snapshot.data!.requests;
-                  final pendingCount = allRequests
-                      .where((r) => r.status == 'pending')
-                      .length;
-                  final approvedCount = allRequests
-                      .where((r) => r.status == 'approved')
-                      .length;
-                  final rejectedCount = allRequests
-                      .where((r) => r.status == 'rejected')
-                      .length;
-                  final filtered = _applyFilter(allRequests);
-
-                  return Column(
-                    children: [
-                      const SizedBox(height: 10),
-                      _buildFilterTabs(
-                        pendingCount,
-                        approvedCount,
-                        rejectedCount,
-                      ),
-                      const SizedBox(height: 8),
-                      Expanded(
-                        child: filtered.isEmpty
-                            ? _buildEmptyState()
-                            : RefreshIndicator(
-                                onRefresh: _onRefresh,
-                                color: AppColors.accentGreen,
-                                backgroundColor: const Color(0xFF2C2C2E),
-                                child: ListView.builder(
-                                  physics: const AlwaysScrollableScrollPhysics(
-                                    parent: BouncingScrollPhysics(),
-                                  ),
-                                  padding: const EdgeInsets.fromLTRB(
-                                    20,
-                                    4,
-                                    20,
-                                    40,
-                                  ),
-                                  itemCount: filtered.length,
-                                  itemBuilder: (context, index) {
-                                    return _buildGlassRequestCard(
-                                      filtered[index],
-                                    );
-                                  },
-                                ),
-                              ),
-                      ),
-                    ],
+      backgroundColor: AppColors.background,
+      body: SafeArea(
+        bottom: false,
+        minimum: const EdgeInsets.only(top: 8),
+        child: Column(
+          children: [
+            SizedBox(
+              height: 36,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                itemCount: _tabs.length,
+                separatorBuilder: (_, __) => const SizedBox(width: 8),
+                itemBuilder: (context, i) {
+                  final (status, label, color) = _tabs[i];
+                  return _FilterChip(
+                    label: label,
+                    color: color,
+                    count: _counts[status ?? 'all'] ?? 0,
+                    selected: _filter == status,
+                    onTap: () => _onFilterChanged(status),
                   );
                 },
               ),
             ),
-          ),
-          if (_isProcessing)
-            Container(
-              color: Colors.black.withOpacity(0.6),
-              child: BackdropFilter(
-                filter: ImageFilter.blur(sigmaX: 5, sigmaY: 5),
-                child: const Center(
-                  child: CircularProgressIndicator(
-                    color: AppColors.accentGreen,
-                  ),
-                ),
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildFilterTabs(int pending, int approved, int rejected) {
-    final filters = [
-      {
-        'key': 'all',
-        'label': 'All',
-        'icon': Iconsax.receipt_1,
-        'color': Colors.blueAccent,
-        'count': pending + approved + rejected,
-      },
-      {
-        'key': 'pending',
-        'label': 'Pending',
-        'icon': Iconsax.timer_1,
-        'color': Colors.orangeAccent,
-        'count': pending,
-      },
-      {
-        'key': 'approved',
-        'label': 'Approved',
-        'icon': Iconsax.verify,
-        'color': AppColors.accentGreen,
-        'count': approved,
-      },
-      {
-        'key': 'rejected',
-        'label': 'Rejected',
-        'icon': Iconsax.close_circle,
-        'color': Colors.redAccent,
-        'count': rejected,
-      },
-    ];
-
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 20),
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        physics: const BouncingScrollPhysics(),
-        child: Row(
-          children: filters.map((f) {
-            final key = f['key'] as String;
-            final label = f['label'] as String;
-            final icon = f['icon'] as IconData;
-            final color = f['color'] as Color;
-            final count = f['count'] as int;
-            final isSelected = _filter == key;
-
-            return Padding(
-              padding: const EdgeInsets.only(right: 8),
-              child: ScaleButton(
-                onTap: () {
-                  HapticFeedback.lightImpact();
-                  setState(() => _filter = key);
-                },
-                scaleAmount: 0.95,
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 250),
-                  curve: Curves.easeOutCubic,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 14,
-                    vertical: 10,
-                  ),
-                  decoration: BoxDecoration(
-                    color: isSelected
-                        ? color.withOpacity(0.18)
-                        : Colors.white.withOpacity(0.03),
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(
-                      color: isSelected
-                          ? color.withOpacity(0.5)
-                          : Colors.white.withOpacity(0.06),
-                      width: isSelected ? 1.5 : 1.0,
+            const SizedBox(height: 12),
+            Expanded(
+              child: _loading
+                  ? const _ListSkeleton()
+                  : _requests.isEmpty
+                  ? _buildEmpty()
+                  : RefreshIndicator(
+                      onRefresh: () => _load(refresh: true),
+                      color: AppColors.accentInk,
+                      backgroundColor: AppColors.surface,
+                      child: ListView.separated(
+                        controller: _scrollController,
+                        padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+                        physics: const AlwaysScrollableScrollPhysics(
+                          parent: BouncingScrollPhysics(),
+                        ),
+                        itemCount: _requests.length + 1,
+                        separatorBuilder: (_, __) => const SizedBox(height: 10),
+                        itemBuilder: (context, i) {
+                          if (i == _requests.length) {
+                            return _buildFooter();
+                          }
+                          final request = _requests[i];
+                          return _RequestCard(
+                            request: request,
+                            busy: _busyIds.contains(request.id),
+                            onApprove: () => _approve(request),
+                            onReject: () => _reject(request),
+                            onViewScreenshot: () => _viewScreenshot(request),
+                          );
+                        },
+                      ),
                     ),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        icon,
-                        size: 14,
-                        color: isSelected
-                            ? color
-                            : Colors.white.withOpacity(0.3),
-                      ),
-                      const SizedBox(width: 7),
-                      Text(
-                        label,
-                        style: GoogleFonts.ibmPlexSans(
-                          color: isSelected
-                              ? color
-                              : Colors.white.withOpacity(0.45),
-                          fontSize: 12,
-                          fontWeight: isSelected
-                              ? FontWeight.bold
-                              : FontWeight.w500,
-                        ),
-                      ),
-                      if (count > 0 && isSelected) ...[
-                        const SizedBox(width: 6),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 6,
-                            vertical: 2,
-                          ),
-                          decoration: BoxDecoration(
-                            color: color.withOpacity(0.2),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Text(
-                            "$count",
-                            style: GoogleFonts.spaceMono(
-                              color: color,
-                              fontSize: 10,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-              ),
-            );
-          }).toList(),
+            ),
+          ],
         ),
       ),
     );
   }
 
-  Widget _buildShimmer() {
-    return ListView(
-      physics: const BouncingScrollPhysics(),
-      padding: const EdgeInsets.symmetric(horizontal: 20),
-      children: List.generate(
-        3,
-        (i) => Padding(
-          padding: const EdgeInsets.only(bottom: 14),
-          child: LiquidGlassContainer(
-            borderRadius: BorderRadius.circular(22),
-            opacity: 0.04,
-            padding: const EdgeInsets.all(20),
-            child: Column(
+  Widget _buildFooter() {
+    if (_loadingMore) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 20),
+        child: AppLoader(compact: true),
+      );
+    }
+    if (_page < _lastPage) return const SizedBox(height: 20);
+    return Padding(
+      padding: const EdgeInsets.only(top: 16),
+      child: Center(
+        child: Text(
+          '${_requests.length} shown',
+          style: Theme.of(context).textTheme.bodySmall,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildEmpty() => switch (_filter) {
+    'pending' => const AppEmptyState(
+      icon: Iconsax.tick_circle,
+      title: 'Nothing waiting',
+      subtitle: 'Every request has been dealt with.',
+    ),
+    'rejected' => const AppEmptyState(
+      icon: Iconsax.close_circle,
+      title: 'No rejected requests',
+    ),
+    'approved' => const AppEmptyState(
+      icon: Iconsax.tick_circle,
+      title: 'No approved requests yet',
+    ),
+    _ => const AppEmptyState(
+      icon: Iconsax.receipt_item,
+      title: 'No requests',
+      subtitle: 'Renewals your users submit will appear here.',
+    ),
+  };
+}
+
+// ── Card ──────────────────────────────────────────────────────────────────
+
+class _RequestCard extends StatelessWidget {
+  final RenewalRequest request;
+  final bool busy;
+  final VoidCallback onApprove;
+  final VoidCallback onReject;
+  final VoidCallback onViewScreenshot;
+
+  const _RequestCard({
+    required this.request,
+    required this.busy,
+    required this.onApprove,
+    required this.onReject,
+    required this.onViewScreenshot,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = Theme.of(context).textTheme;
+    final kind = _RequestKind.of(request.type);
+    final status = _StatusStyle.of(request.status);
+    final pending = request.status == 'pending';
+    final money = NumberFormat('#,##0');
+
+    return AppCard(
+      padding: EdgeInsets.zero,
+      radius: AppTheme.radiusMd,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 14, 14, 10),
+            child: Row(
               children: [
-                Row(
-                  children: [
-                    Container(
-                      width: 46,
-                      height: 46,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: Colors.white.withOpacity(0.04),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Container(
-                            height: 14,
-                            width: 100,
-                            decoration: BoxDecoration(
-                              color: Colors.white.withOpacity(0.04),
-                              borderRadius: BorderRadius.circular(4),
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          Container(
-                            height: 10,
-                            width: 140,
-                            decoration: BoxDecoration(
-                              color: Colors.white.withOpacity(0.03),
-                              borderRadius: BorderRadius.circular(4),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    Container(
-                      height: 24,
-                      width: 70,
-                      decoration: BoxDecoration(
-                        color: Colors.white.withOpacity(0.03),
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                    ),
-                  ],
+                AppIconBadge(
+                  icon: kind.icon,
+                  color: kind.color,
+                  background: kind.wash,
+                  size: 18,
+                  padding: 9,
                 ),
-                const SizedBox(height: 16),
-                Container(
-                  height: 56,
-                  width: double.infinity,
-                  decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.02),
-                    borderRadius: BorderRadius.circular(14),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    request.vpnUserName,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: t.titleMedium?.copyWith(fontSize: 15),
                   ),
                 ),
-                const SizedBox(height: 14),
-                Row(
-                  children: [
-                    Expanded(
-                      child: Container(
-                        height: 44,
-                        decoration: BoxDecoration(
-                          color: Colors.white.withOpacity(0.03),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Container(
-                        height: 44,
-                        decoration: BoxDecoration(
-                          color: Colors.white.withOpacity(0.03),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
-                    ),
-                  ],
+                const SizedBox(width: 8),
+                AppPill(
+                  label: status.label.toUpperCase(),
+                  color: status.color,
+                  background: status.wash,
                 ),
               ],
             ),
           ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildEmptyState() {
-    final isFiltered = _filter != 'all';
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Container(
-            padding: const EdgeInsets.all(28),
-            decoration: BoxDecoration(
-              color: AppColors.accentGreen.withOpacity(0.05),
-              shape: BoxShape.circle,
-              border: Border.all(
-                color: AppColors.accentGreen.withOpacity(0.08),
+          // Label/value rows: an agent checking a payment reads down the
+          // right-hand column, so the values line up rather than sitting at
+          // the end of sentences of different lengths.
+          _DetailRow(
+            label: 'Amount',
+            valueWidget: Text(
+              '${money.format(request.estimatedCost)} MMK',
+              style: t.titleMedium?.copyWith(
+                fontSize: 15,
+                color: AppColors.orange,
               ),
             ),
-            child: Icon(
-              isFiltered ? Iconsax.filter_search : Iconsax.tick_circle,
-              size: 44,
-              color: AppColors.accentGreen.withOpacity(0.3),
-            ),
           ),
-          const SizedBox(height: 20),
-          Text(
-            isFiltered ? "No ${_filter} requests" : "All caught up!",
-            style: GoogleFonts.exo2(
-              color: Colors.white.withOpacity(0.5),
-              fontSize: 16,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            isFiltered
-                ? "Try a different filter"
-                : "No renewal requests at the moment",
-            style: GoogleFonts.ibmPlexSans(
-              color: Colors.white.withOpacity(0.25),
-              fontSize: 13,
-            ),
-          ),
-          if (isFiltered) ...[
-            const SizedBox(height: 16),
-            ScaleButton(
-              onTap: () => setState(() => _filter = 'all'),
-              child: LiquidGlassContainer(
-                borderRadius: BorderRadius.circular(12),
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 10,
-                ),
-                opacity: 0.06,
-                child: Text(
-                  "Show All",
-                  style: GoogleFonts.ibmPlexSans(
-                    color: Colors.white.withOpacity(0.7),
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
+          _DetailRow(label: kind.label, value: request.subtitle),
+          _DetailRow(label: 'Date', value: _formatDate(request.createdAt)),
+          if (request.rejectReason != null)
+            _DetailRow(label: 'Reason', value: request.rejectReason!),
+          _DetailRow(
+            label: 'Payment slip',
+            last: true,
+            valueWidget: InkWell(
+              onTap: onViewScreenshot,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'View',
+                    style: t.bodyMedium?.copyWith(
+                      color: AppColors.info,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
-                ),
+                  const SizedBox(width: 5),
+                  const Icon(Iconsax.eye, size: 15, color: AppColors.info),
+                ],
               ),
             ),
-          ],
+          ),
+          if (pending)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 4, 14, 14),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: SizedBox(
+                      height: 42,
+                      child: OutlinedButton(
+                        onPressed: busy ? null : onReject,
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: AppColors.danger,
+                          side: const BorderSide(color: AppColors.danger),
+                          padding: EdgeInsets.zero,
+                          minimumSize: Size.zero,
+                          textStyle: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        // No icon: at half width the icon pushed "Reject"
+                        // onto two lines and split the word.
+                        child: const Text('Reject'),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: SizedBox(
+                      // Both halves fixed to the same 42: the theme's 48
+                      // minimum made a pair of buttons the tallest thing in a
+                      // card whose subject is the figures above them.
+                      height: 42,
+                      child: FilledButton.icon(
+                        onPressed: busy ? null : onApprove,
+                        style: FilledButton.styleFrom(
+                          padding: EdgeInsets.zero,
+                          minimumSize: Size.zero,
+                          textStyle: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        icon: busy
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: AppColors.textOnAccent,
+                                ),
+                              )
+                            : const Icon(Icons.check_rounded, size: 18),
+                        label: Text(busy ? 'Working' : 'Approve'),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
         ],
       ),
     );
   }
 
-  Widget _buildGlassRequestCard(RenewalRequest request) {
-    Color statusColor;
-    IconData statusIcon;
-    String statusText = request.status.toUpperCase();
+  static String _formatDate(String raw) {
+    final parsed = DateTime.tryParse(raw);
+    if (parsed == null) return raw;
+    return DateFormat('dd MMM yyyy, h:mm a').format(parsed.toLocal());
+  }
+}
 
-    switch (request.status) {
-      case 'approved':
-        statusColor = AppColors.accentGreen;
-        statusIcon = Iconsax.verify;
-        break;
-      case 'rejected':
-        statusColor = Colors.redAccent;
-        statusIcon = Iconsax.close_circle;
-        break;
-      default:
-        statusColor = Colors.orangeAccent;
-        statusIcon = Iconsax.timer_1;
-    }
+/// One label/value line inside a request card.
+class _DetailRow extends StatelessWidget {
+  final String label;
+  final String? value;
+  final Widget? valueWidget;
+  final bool last;
 
-    final bool isPending = request.status == 'pending';
-    final bool isDeviceSlot = request.type == 'device_slot';
-    final IconData typeIcon = isDeviceSlot ? Iconsax.mobile : Iconsax.box;
-    final Color typeColor = isDeviceSlot
-        ? Colors.blueAccent
-        : AppColors.accentGreen;
+  const _DetailRow({
+    required this.label,
+    this.value,
+    this.valueWidget,
+    this.last = false,
+  });
 
-    final String displayTitle = request.title.isNotEmpty
-        ? request.title
-        : (isDeviceSlot ? "Device Slot" : "Plan Renewal");
-    final String displaySubtitle = request.subtitle.isNotEmpty
-        ? request.subtitle
-        : (isDeviceSlot ? "Extra Device" : request.planName);
+  @override
+  Widget build(BuildContext context) {
+    final t = Theme.of(context).textTheme;
 
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 14),
-      child: LiquidGlassContainer(
-        borderRadius: BorderRadius.circular(22),
-        padding: const EdgeInsets.all(18),
-        opacity: isPending ? 0.06 : 0.04,
-        tintColor: isPending ? Colors.orangeAccent : null,
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(label, style: t.bodyMedium),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Align(
+                  alignment: Alignment.centerRight,
+                  child:
+                      valueWidget ??
+                      Text(
+                        value ?? '',
+                        textAlign: TextAlign.right,
+                        style: t.bodyLarge?.copyWith(fontSize: 13.5),
+                      ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        if (!last)
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 14),
+            child: _DashedLine(),
+          ),
+      ],
+    );
+  }
+}
+
+/// Hairline of dashes. A solid rule between every field made the card read as
+/// a table; dashes separate without carrying the same weight.
+class _DashedLine extends StatelessWidget {
+  const _DashedLine();
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        const dash = 3.0;
+        const gap = 3.0;
+        final count = (constraints.maxWidth / (dash + gap)).floor();
+        return Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: List.generate(
+            count,
+            (_) => const SizedBox(
+              width: dash,
+              height: 1,
+              child: DecoratedBox(
+                decoration: BoxDecoration(color: AppColors.border),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _FilterChip extends StatelessWidget {
+  final String label;
+  final Color color;
+  final int count;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _FilterChip({
+    required this.label,
+    required this.color,
+    required this.count,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = Theme.of(context).textTheme;
+
+    return Material(
+      color: selected ? color : AppColors.surface,
+      borderRadius: BorderRadius.circular(999),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(999),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14),
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(
+              // Unselected keeps a tint of its own colour, so the row still
+              // reads as three states rather than three identical outlines.
+              color: selected ? color : color.withValues(alpha: 0.35),
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                label,
+                style: t.bodySmall?.copyWith(
+                  color: selected ? AppColors.textOnAccent : color,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              if (count > 0) ...[
+                const SizedBox(width: 6),
+                Text(
+                  count > 999 ? '999+' : '$count',
+                  style: t.bodySmall?.copyWith(
+                    color: selected
+                        ? AppColors.textOnAccent.withValues(alpha: 0.75)
+                        : color.withValues(alpha: 0.7),
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Full-screen payment slip over a blurred copy of the list.
+///
+/// The one place blur earns its cost in this app: it keeps the request the
+/// agent was reading visible behind the image, so checking a slip against the
+/// row does not mean navigating back and forth. Opened as an opaque page
+/// instead, the context was simply gone.
+class _ScreenshotViewer extends StatelessWidget {
+  final String url;
+  final String title;
+
+  const _ScreenshotViewer({required this.url, required this.title});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.transparent,
+      body: Stack(
+        children: [
+          Positioned.fill(
+            child: BackdropFilter(
+              filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+              // A light scrim, not a dark one: the page behind is white, and
+              // dimming it to near-black would defeat the point of leaving it
+              // visible.
+              child: Container(
+                color: AppColors.background.withValues(alpha: 0.72),
+              ),
+            ),
+          ),
+          SafeArea(
+            child: Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(8, 4, 16, 4),
+                  child: Row(
+                    children: [
+                      IconButton(
+                        onPressed: () => Navigator.of(context).pop(),
+                        icon: const Icon(Icons.close_rounded),
+                        color: AppColors.textPrimary,
+                      ),
+                      Expanded(
+                        child: Text(
+                          title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.titleMedium,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(AppTheme.radiusLg),
+                      child: ColoredBox(
+                        color: AppColors.surface,
+                        child: InteractiveViewer(
+                          minScale: 1,
+                          maxScale: 5,
+                          child: Center(
+                            child: Image.network(
+                              url,
+                              fit: BoxFit.contain,
+                              loadingBuilder: (_, child, progress) =>
+                                  progress == null ? child : const AppLoader(),
+                              errorBuilder: (_, __, ___) => const AppEmptyState(
+                                icon: Iconsax.gallery_slash,
+                                title: 'Could not load the screenshot',
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ListSkeleton extends StatelessWidget {
+  const _ListSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView.separated(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+      physics: const NeverScrollableScrollPhysics(),
+      itemCount: 5,
+      separatorBuilder: (_, __) => const SizedBox(height: 10),
+      itemBuilder: (_, __) => const AppCard(
+        padding: EdgeInsets.all(14),
+        radius: AppTheme.radiusMd,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
               children: [
-                Container(
-                  width: 46,
-                  height: 46,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    gradient: LinearGradient(
-                      colors: [
-                        statusColor.withOpacity(0.2),
-                        statusColor.withOpacity(0.08),
-                      ],
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                    ),
-                    border: Border.all(
-                      color: statusColor.withOpacity(0.3),
-                      width: 1.5,
-                    ),
-                  ),
-                  child: Center(
-                    child: Text(
-                      request.vpnUserName.isNotEmpty
-                          ? request.vpnUserName[0].toUpperCase()
-                          : "U",
-                      style: GoogleFonts.exo2(
-                        color: Colors.white,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 18,
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 12),
+                AppSkeleton(width: 36, height: 36, radius: AppTheme.radiusSm),
+                SizedBox(width: 12),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        request.vpnUserName,
-                        style: GoogleFonts.exo2(
-                          color: Colors.white,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 15,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      const SizedBox(height: 3),
-                      Text(
-                        DateFormat(
-                          'dd MMM, hh:mm a',
-                        ).format(DateTime.parse(request.createdAt)),
-                        style: GoogleFonts.ibmPlexSans(
-                          color: Colors.white.withOpacity(0.35),
-                          fontSize: 11,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 5,
-                  ),
-                  decoration: BoxDecoration(
-                    color: statusColor.withOpacity(0.12),
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(
-                      color: statusColor.withOpacity(0.25),
-                      width: 1,
-                    ),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(statusIcon, size: 10, color: statusColor),
-                      const SizedBox(width: 5),
-                      Text(
-                        statusText,
-                        style: GoogleFonts.ibmPlexSans(
-                          color: statusColor,
-                          fontSize: 10,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
+                      AppSkeleton(width: 120, height: 13),
+                      SizedBox(height: 7),
+                      AppSkeleton(width: 170, height: 11),
                     ],
                   ),
                 ),
               ],
             ),
-            const SizedBox(height: 14),
-            Container(
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.025),
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: Colors.white.withOpacity(0.05)),
-              ),
-              child: Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: typeColor.withOpacity(0.12),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Icon(typeIcon, color: typeColor, size: 20),
-                  ),
-                  const SizedBox(width: 14),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          displayTitle,
-                          style: GoogleFonts.exo2(
-                            color: Colors.white,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 14,
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        const SizedBox(height: 3),
-                        Text(
-                          displaySubtitle,
-                          style: GoogleFonts.ibmPlexSans(
-                            color: Colors.white.withOpacity(0.5),
-                            fontSize: 12,
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 14),
-            if (isPending)
-              Row(
-                children: [
-                  Expanded(
-                    child: ScaleButton(
-                      onTap: () => _showScreenshot(request),
-                      child: Container(
-                        height: 44,
-                        decoration: BoxDecoration(
-                          color: Colors.white.withOpacity(0.04),
-                          borderRadius: BorderRadius.circular(14),
-                          border: Border.all(
-                            color: Colors.white.withOpacity(0.08),
-                          ),
-                        ),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            const Icon(
-                              Iconsax.image,
-                              color: Colors.blueAccent,
-                              size: 16,
-                            ),
-                            const SizedBox(width: 6),
-                            Flexible(
-                              child: Text(
-                                "Proof",
-                                style: GoogleFonts.ibmPlexSans(
-                                  color: Colors.blueAccent,
-                                  fontWeight: FontWeight.w600,
-                                  fontSize: 12,
-                                ),
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: ScaleButton(
-                      onTap: () => _showGlassRejectDialog(request.id),
-                      child: Container(
-                        height: 44,
-                        decoration: BoxDecoration(
-                          color: Colors.redAccent.withOpacity(0.08),
-                          borderRadius: BorderRadius.circular(14),
-                          border: Border.all(
-                            color: Colors.redAccent.withOpacity(0.2),
-                          ),
-                        ),
-                        child: Center(
-                          child: Text(
-                            "Reject",
-                            style: GoogleFonts.exo2(
-                              color: Colors.redAccent,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 13,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: ScaleButton(
-                      onTap: () => _handleApprove(request.id),
-                      child: Container(
-                        height: 44,
-                        decoration: BoxDecoration(
-                          gradient: LinearGradient(
-                            colors: [
-                              AppColors.accentGreen.withOpacity(0.8),
-                              AppColors.accentGreen,
-                            ],
-                          ),
-                          borderRadius: BorderRadius.circular(14),
-                          boxShadow: [
-                            BoxShadow(
-                              color: AppColors.accentGreen.withOpacity(0.25),
-                              blurRadius: 12,
-                              offset: const Offset(0, 4),
-                            ),
-                          ],
-                        ),
-                        child: Center(
-                          child: Text(
-                            "Approve",
-                            style: GoogleFonts.exo2(
-                              color: Colors.white,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 13,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              )
-            else
-              ScaleButton(
-                onTap: () => _showScreenshot(request),
-                child: Container(
-                  width: double.infinity,
-                  height: 42,
-                  decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.04),
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: Colors.white.withOpacity(0.08)),
-                  ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      const Icon(
-                        Iconsax.image,
-                        color: Colors.blueAccent,
-                        size: 16,
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        "View Payment Proof",
-                        style: GoogleFonts.ibmPlexSans(
-                          color: Colors.blueAccent,
-                          fontWeight: FontWeight.w600,
-                          fontSize: 13,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
+            SizedBox(height: 14),
+            AppSkeleton(height: 40, radius: AppTheme.radiusSm),
           ],
         ),
       ),
     );
-  }
-
-  void _showScreenshot(RenewalRequest request) {
-    showDialog(
-      context: context,
-      barrierDismissible: true,
-      builder: (_) => BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
-        child: Dialog(
-          backgroundColor: Colors.transparent,
-          child: LiquidGlassContainer(
-            opacity: 0.12,
-            borderRadius: BorderRadius.circular(24),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.all(18),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Expanded(
-                        child: Row(
-                          children: [
-                            const Icon(
-                              Iconsax.image,
-                              color: Colors.blueAccent,
-                              size: 18,
-                            ),
-                            const SizedBox(width: 10),
-                            Flexible(
-                              child: Text(
-                                "Payment Proof",
-                                style: GoogleFonts.exo2(
-                                  color: Colors.white,
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      ScaleButton(
-                        onTap: () => Navigator.pop(context),
-                        child: Container(
-                          padding: const EdgeInsets.all(6),
-                          decoration: BoxDecoration(
-                            color: Colors.white.withOpacity(0.06),
-                            shape: BoxShape.circle,
-                          ),
-                          child: Icon(
-                            Iconsax.close_circle,
-                            color: Colors.white.withOpacity(0.5),
-                            size: 20,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                Container(
-                  height: 400,
-                  width: double.infinity,
-                  decoration: BoxDecoration(
-                    color: Colors.black.withOpacity(0.3),
-                    borderRadius: const BorderRadius.only(
-                      bottomLeft: Radius.circular(24),
-                      bottomRight: Radius.circular(24),
-                    ),
-                  ),
-                  child: ClipRRect(
-                    borderRadius: const BorderRadius.only(
-                      bottomLeft: Radius.circular(24),
-                      bottomRight: Radius.circular(24),
-                    ),
-                    child: InteractiveViewer(
-                      child: Image.network(
-                        request.screenshotUrl,
-                        fit: BoxFit.contain,
-                        loadingBuilder: (_, child, p) => p == null
-                            ? child
-                            : const Center(
-                                child: CircularProgressIndicator(
-                                  color: AppColors.accentGreen,
-                                ),
-                              ),
-                        errorBuilder: (_, __, ___) => Center(
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(
-                                Icons.broken_image,
-                                color: Colors.white.withOpacity(0.2),
-                                size: 48,
-                              ),
-                              const SizedBox(height: 8),
-                              Text(
-                                "Failed to load",
-                                style: GoogleFonts.ibmPlexSans(
-                                  color: Colors.white.withOpacity(0.3),
-                                  fontSize: 12,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Future<void> _handleApprove(int id) async {
-    setState(() => _isProcessing = true);
-    final success = await _renewalService.approveRequest(id);
-    if (mounted) {
-      setState(() => _isProcessing = false);
-      if (success) {
-        _loadRequests();
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text("Request Approved Successfully!"),
-            backgroundColor: AppColors.accentGreen,
-          ),
-        );
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text("Approval Failed."),
-            backgroundColor: Colors.redAccent,
-          ),
-        );
-      }
-    }
-  }
-
-  void _showGlassRejectDialog(int id) {
-    final controller = TextEditingController();
-    showDialog(
-      context: context,
-      builder: (ctx) => BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 5, sigmaY: 5),
-        child: Dialog(
-          backgroundColor: Colors.transparent,
-          child: LiquidGlassContainer(
-            opacity: 0.15,
-            borderRadius: BorderRadius.circular(24),
-            padding: const EdgeInsets.all(24),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(14),
-                  decoration: BoxDecoration(
-                    color: Colors.redAccent.withOpacity(0.12),
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Icon(
-                    Iconsax.close_circle,
-                    color: Colors.redAccent,
-                    size: 28,
-                  ),
-                ),
-                const SizedBox(height: 16),
-                Text(
-                  "Reject Request",
-                  style: GoogleFonts.exo2(
-                    color: Colors.white,
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(height: 16),
-                LiquidGlassContainer(
-                  borderRadius: BorderRadius.circular(14),
-                  opacity: 0.05,
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: TextField(
-                    controller: controller,
-                    style: GoogleFonts.ibmPlexSans(
-                      color: Colors.white,
-                      fontSize: 14,
-                    ),
-                    cursorColor: Colors.redAccent,
-                    maxLines: 3,
-                    minLines: 1,
-                    decoration: InputDecoration(
-                      hintText: "Reason for rejection...",
-                      hintStyle: GoogleFonts.ibmPlexSans(
-                        color: Colors.white.withOpacity(0.25),
-                      ),
-                      border: InputBorder.none,
-                      contentPadding: const EdgeInsets.symmetric(vertical: 14),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 20),
-                Row(
-                  children: [
-                    Expanded(
-                      child: ScaleButton(
-                        onTap: () => Navigator.pop(ctx),
-                        child: Container(
-                          height: 48,
-                          decoration: BoxDecoration(
-                            color: Colors.white.withOpacity(0.08),
-                            borderRadius: BorderRadius.circular(14),
-                          ),
-                          child: Center(
-                            child: Text(
-                              "Cancel",
-                              style: GoogleFonts.ibmPlexSans(
-                                color: Colors.white70,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: ScaleButton(
-                        onTap: () {
-                          Navigator.pop(ctx);
-                          if (controller.text.isNotEmpty)
-                            _handleReject(id, controller.text);
-                        },
-                        child: Container(
-                          height: 48,
-                          decoration: BoxDecoration(
-                            color: Colors.redAccent.withOpacity(0.2),
-                            borderRadius: BorderRadius.circular(14),
-                            border: Border.all(
-                              color: Colors.redAccent.withOpacity(0.5),
-                            ),
-                          ),
-                          child: Center(
-                            child: Text(
-                              "Reject",
-                              style: GoogleFonts.ibmPlexSans(
-                                color: Colors.white,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Future<void> _handleReject(int id, String reason) async {
-    setState(() => _isProcessing = true);
-    final success = await _renewalService.rejectRequest(id, reason);
-    if (mounted) {
-      setState(() => _isProcessing = false);
-      if (success) {
-        _loadRequests();
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text("Request Rejected."),
-            backgroundColor: Colors.orangeAccent,
-          ),
-        );
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text("Failed to reject."),
-            backgroundColor: Colors.redAccent,
-          ),
-        );
-      }
-    }
   }
 }

@@ -7,12 +7,23 @@ class RenewalRequestService {
   // ⭐️ ApiClient ရဲ့ dio ကို ယူသုံးပါ (Token Auto ပါပြီးသား ဖြစ်မယ်)
   final Dio _dio = ApiClient().dio;
 
-  Future<RenewalRequestResponse?> getRenewalRequests({int page = 1}) async {
+  /// [status] is one of pending / approved / rejected, or null for all.
+  /// Filtering happens server-side — the screen only ever holds one page.
+  Future<RenewalRequestResponse?> getRenewalRequests({
+    int page = 1,
+    String? status,
+  }) async {
     try {
       // ApiClient မှာ BaseUrl ရှိပြီးသားမို့ Endpoint ပဲ ထည့်ရုံပါ
       final response = await _dio.get(
         ApiConfig.agentRenewalRequests,
-        queryParameters: {'page': page},
+        queryParameters: {
+          'page': page,
+          // Omitted entirely when null: the backend treats an unrecognised
+          // status as "no filter", but sending an empty string would still
+          // read as a deliberate parameter.
+          if (status != null) 'status': status,
+        },
       );
 
       if (response.statusCode == 200) {
