@@ -318,9 +318,12 @@ class _RenewalRequestsScreenState extends State<RenewalRequestsScreen> {
       backgroundColor: AppColors.background,
       body: SafeArea(
         bottom: false,
-        minimum: const EdgeInsets.only(top: 8),
         child: Column(
           children: [
+            // Plain gap, not SafeArea.minimum: that only applies when the
+            // value exceeds the system inset, and the status bar is already
+            // taller than any sensible padding here — so it did nothing.
+            const SizedBox(height: 14),
             SizedBox(
               height: 36,
               child: ListView.separated(
