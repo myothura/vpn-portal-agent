@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:iconsax/iconsax.dart';
 import 'package:intl/intl.dart';
 
+import 'package:vpn_agent_app/core/services/agent_realtime_service.dart';
 import 'package:vpn_agent_app/core/theme/app_colors.dart';
 import 'package:vpn_agent_app/core/theme/app_theme.dart';
 import 'package:vpn_agent_app/shared_widgets/ui/app_surface.dart';
@@ -113,11 +114,18 @@ class _RenewalRequestsScreenState extends State<RenewalRequestsScreen> {
   void initState() {
     super.initState();
     _scrollController.addListener(_onScroll);
+
+    // A request arriving while this screen is open now appears without a pull
+    // to refresh. The push notification only helps an agent who is elsewhere.
+    AgentRealtimeService.instance.start();
+    AgentRealtimeService.instance.addRenewalListener(_onNewRequest);
+
     _load(refresh: true);
   }
 
   @override
   void dispose() {
+    AgentRealtimeService.instance.removeRenewalListener(_onNewRequest);
     _scrollController.dispose();
     super.dispose();
   }
@@ -126,6 +134,13 @@ class _RenewalRequestsScreenState extends State<RenewalRequestsScreen> {
     if (!_scrollController.hasClients) return;
     final p = _scrollController.position;
     if (p.pixels >= p.maxScrollExtent - 600) _loadMore();
+  }
+
+  void _onNewRequest(Map<String, dynamic> _) {
+    if (!mounted) return;
+    // Refetched rather than inserted: the counts and the estimated cost are
+    // computed server-side, and a locally-built row would be missing both.
+    _load(refresh: true);
   }
 
   Future<void> _load({bool refresh = false}) async {

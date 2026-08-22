@@ -49,10 +49,12 @@ class AgentRealtimeService {
   }
 
   final AuthService _auth = AuthService();
-  final Dio _dio = Dio(BaseOptions(
-    connectTimeout: const Duration(seconds: 15),
-    receiveTimeout: const Duration(seconds: 15),
-  ));
+  final Dio _dio = Dio(
+    BaseOptions(
+      connectTimeout: const Duration(seconds: 15),
+      receiveTimeout: const Duration(seconds: 15),
+    ),
+  );
 
   WebSocketChannel? _channel;
   StreamSubscription? _sub;
@@ -75,6 +77,7 @@ class AgentRealtimeService {
   // would make every screen filter events it never asked for.
   final List<void Function(Map<String, dynamic>)> _readListeners = [];
   final List<void Function(Map<String, dynamic>)> _typingListeners = [];
+  final List<void Function(Map<String, dynamic>)> _renewalListeners = [];
 
   void addListener(void Function(Map<String, dynamic>) cb) {
     if (!_listeners.contains(cb)) _listeners.add(cb);
@@ -102,6 +105,18 @@ class AgentRealtimeService {
 
   void removeTypingListener(void Function(Map<String, dynamic>) cb) {
     _typingListeners.remove(cb);
+  }
+
+  /// Fires when a user submits a renewal request. The payload is only enough
+  /// to know one arrived — the screen refetches, because a request is money
+  /// and a row rebuilt from a broadcast could show a figure that disagrees
+  /// with what approving it will charge.
+  void addRenewalListener(void Function(Map<String, dynamic>) cb) {
+    if (!_renewalListeners.contains(cb)) _renewalListeners.add(cb);
+  }
+
+  void removeRenewalListener(void Function(Map<String, dynamic>) cb) {
+    _renewalListeners.remove(cb);
   }
 
   Future<void> start() async {
@@ -187,6 +202,12 @@ class AgentRealtimeService {
             _emitTo(_readListeners, Map<String, dynamic>.from(data));
           }
           break;
+        case 'renewal.new':
+          final data = _decodeData(evt['data']);
+          if (data.isNotEmpty) {
+            _emitTo(_renewalListeners, Map<String, dynamic>.from(data));
+          }
+          break;
         case 'chat.typing':
           final data = _decodeData(evt['data']);
           if (data.isNotEmpty) {
@@ -221,10 +242,12 @@ class AgentRealtimeService {
       final res = await _dio.post(
         'https://$_host/api/broadcasting/auth',
         data: {'socket_id': _socketId, 'channel_name': _channelName},
-        options: Options(headers: {
-          'Authorization': 'Bearer $_token',
-          'Accept': 'application/json',
-        }),
+        options: Options(
+          headers: {
+            'Authorization': 'Bearer $_token',
+            'Accept': 'application/json',
+          },
+        ),
       );
       final auth = res.data is Map ? res.data['auth'] : null;
       if (auth == null) {
@@ -288,7 +311,9 @@ class AgentRealtimeService {
     _socketId = null;
     if (!_wantConnected) return;
     _reconnectTimer?.cancel();
-    final delay = Duration(seconds: (2 * (_reconnectAttempts + 1)).clamp(2, 30));
+    final delay = Duration(
+      seconds: (2 * (_reconnectAttempts + 1)).clamp(2, 30),
+    );
     _reconnectAttempts++;
     _hostIndex++;
     debugPrint('[AgentRealtime] reconnect in ${delay.inSeconds}s via $_host');
