@@ -14,6 +14,7 @@ import 'package:vpn_agent_app/features/auth/screens/auth_check_screen.dart';
 import 'package:vpn_agent_app/l10n/app_localizations.dart';
 import 'package:vpn_agent_app/l10n/l10n.dart';
 import 'package:vpn_agent_app/core/theme/app_colors.dart';
+import 'package:vpn_agent_app/core/theme/app_theme.dart';
 import 'package:vpn_agent_app/features/chat/screens/agent_chat_detail_screen.dart';
 
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
@@ -47,6 +48,16 @@ void main() async {
     DeviceOrientation.portraitUp,
     DeviceOrientation.portraitDown,
   ]);
+
+  // Light chrome: dark icons on a light bar. The previous dark build relied
+  // on the platform default (light icons), which is invisible on white.
+  SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
+    statusBarColor: Colors.transparent,
+    statusBarIconBrightness: Brightness.dark,
+    statusBarBrightness: Brightness.light,
+    systemNavigationBarColor: AppColors.background,
+    systemNavigationBarIconBrightness: Brightness.dark,
+  ));
 
   runApp(const MyApp());
 }
@@ -127,19 +138,9 @@ class _MyAppState extends State<MyApp> {
                 navigatorKey: navigatorKey,
                 title: 'Agent Portal',
                 debugShowCheckedModeBanner: false,
-                theme: ThemeData.dark().copyWith(
-                  scaffoldBackgroundColor: AppColors.darkBackground,
-                  textTheme: Typography.englishLike2021.apply(
-                    fontFamily: 'Ubuntu',
-                    bodyColor: Colors.white,
-                    displayColor: Colors.white,
-                  ),
-                  appBarTheme: const AppBarTheme(
-                    backgroundColor: Colors.transparent,
-                    elevation: 0,
-                    centerTitle: true,
-                  ),
-                ),
+                theme: AppTheme.lightTheme,
+                themeMode: ThemeMode.light,
+                darkTheme: AppTheme.lightTheme,
                 locale: provider.locale,
                 supportedLocales: L10n.all,
                 localizationsDelegates: const [
