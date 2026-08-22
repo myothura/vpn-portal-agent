@@ -1,4 +1,5 @@
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import 'package:vpn_agent_app/core/api/api_client.dart';
 import 'package:vpn_agent_app/core/api/api_config.dart';
 import 'package:vpn_agent_app/features/users/models/plan_model.dart';
@@ -169,6 +170,30 @@ class UserManagementService {
           ? (e.response!.data['message'] ?? 'Network error')
           : 'Network error';
       return {'success': false, 'message': msg};
+    }
+  }
+
+  /// Slot price and the device ceiling, both from app-config.
+  ///
+  /// Returned together because they are read together and are one request.
+  /// The server is the authority on the charge regardless — it recomputes the
+  /// cost on add-slots and refuses if the balance is short — so a failure here
+  /// only costs the preview, not correctness.
+  Future<({int price, int maxSlots})?> getSlotSettings() async {
+    try {
+      final response = await _dio.get(
+        '${ApiConfig.baseUrl}/settings/app-config',
+      );
+      final data = response.data?['data'];
+      if (response.statusCode != 200 || data == null) return null;
+
+      return (
+        price: int.tryParse(data['device_slot_price'].toString()) ?? 1000,
+        maxSlots: int.tryParse(data['max_device_limit'].toString()) ?? 5,
+      );
+    } catch (e) {
+      debugPrint('Slot settings failed: $e');
+      return null;
     }
   }
 

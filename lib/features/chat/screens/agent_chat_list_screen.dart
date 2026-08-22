@@ -341,7 +341,6 @@ class _AgentChatListScreenState extends State<AgentChatListScreen> {
                                 return _ChatRow(
                                   key: ValueKey(user['id']),
                                   user: user,
-                                  showDivider: i < _users.length - 1,
                                   onTap: () => _openChat(user),
                                 );
                               },
@@ -554,15 +553,9 @@ class _ChatRow extends StatelessWidget {
   static const double height = 74;
 
   final Map<String, dynamic> user;
-  final bool showDivider;
   final VoidCallback onTap;
 
-  const _ChatRow({
-    super.key,
-    required this.user,
-    required this.showDivider,
-    required this.onTap,
-  });
+  const _ChatRow({super.key, required this.user, required this.onTap});
 
   static const _avatars = [
     'assets/images/avatars/a1.png',
@@ -741,13 +734,7 @@ class _ChatRow extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         Expanded(child: row),
-        if (showDivider)
-          const Padding(
-            padding: EdgeInsets.only(left: 74),
-            child: Divider(height: 1),
-          )
-        else
-          const SizedBox(height: 1),
+        const SizedBox(height: 1),
       ],
     );
   }

@@ -485,7 +485,6 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                               user: user,
                               onTap: () => _openUser(user),
                               onDelete: () => _confirmDelete(user),
-                              showDivider: i < _users.length - 1,
                             );
                           },
                         ),
@@ -600,14 +599,12 @@ class _UserRow extends StatelessWidget {
   final VpnUser user;
   final VoidCallback onTap;
   final VoidCallback onDelete;
-  final bool showDivider;
 
   const _UserRow({
     super.key,
     required this.user,
     required this.onTap,
     required this.onDelete,
-    this.showDivider = true,
   });
 
   @override
@@ -730,13 +727,7 @@ class _UserRow extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         Expanded(child: dismissible),
-        if (showDivider)
-          const Padding(
-            padding: EdgeInsets.only(left: 68),
-            child: Divider(height: 1),
-          )
-        else
-          const SizedBox(height: 1),
+        const SizedBox(height: 1),
       ],
     );
   }
