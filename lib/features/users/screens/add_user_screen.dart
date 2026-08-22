@@ -221,148 +221,191 @@ class _AddUserScreenState extends State<AddUserScreen> {
           ? const AppLoader()
           : GestureDetector(
               onTap: () => FocusScope.of(context).unfocus(),
-              child: SafeArea(
-                child: Column(
-                  children: [
-                    Expanded(
-                      child: SingleChildScrollView(
-                        padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-                        physics: const BouncingScrollPhysics(),
-                        child: Form(
-                          key: _formKey,
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              _BalanceRow(balance: _creditBalance),
-                              const SizedBox(height: 20),
-                              TextFormField(
-                                controller: _username,
-                                autocorrect: false,
-                                textInputAction: TextInputAction.next,
-                                decoration: const InputDecoration(
-                                  labelText: 'Username',
-                                  prefixIcon: Icon(Iconsax.user, size: 18),
-                                ),
-                                validator: (v) {
-                                  final value = v?.trim() ?? '';
-                                  if (value.isEmpty) return 'Enter a username';
-                                  if (value.length < 3) {
-                                    return 'At least 3 characters';
-                                  }
-                                  // Spaces and punctuation break the Xray
-                                  // client email key derived from this name.
-                                  if (!RegExp(
-                                    r'^[A-Za-z0-9_.-]+$',
-                                  ).hasMatch(value)) {
-                                    return 'Letters, numbers, _ . - only';
-                                  }
-                                  return null;
-                                },
-                              ),
-                              const SizedBox(height: 14),
-                              TextFormField(
-                                controller: _password,
-                                obscureText: _obscure,
-                                autocorrect: false,
-                                enableSuggestions: false,
-                                decoration: InputDecoration(
-                                  labelText: 'Password',
-                                  prefixIcon: const Icon(
-                                    Iconsax.lock,
-                                    size: 18,
+              child: Stack(
+                children: [
+                  const _HeroBackdrop(),
+                  SafeArea(
+                    child: Column(
+                      children: [
+                        Expanded(
+                          child: SingleChildScrollView(
+                            padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+                            physics: const BouncingScrollPhysics(),
+                            child: Form(
+                              key: _formKey,
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  _BalanceRow(balance: _creditBalance),
+                                  const SizedBox(height: 20),
+                                  TextFormField(
+                                    controller: _username,
+                                    autocorrect: false,
+                                    textInputAction: TextInputAction.next,
+                                    decoration: const InputDecoration(
+                                      labelText: 'Username',
+                                      prefixIcon: Icon(Iconsax.user, size: 18),
+                                    ),
+                                    validator: (v) {
+                                      final value = v?.trim() ?? '';
+                                      if (value.isEmpty)
+                                        return 'Enter a username';
+                                      if (value.length < 3) {
+                                        return 'At least 3 characters';
+                                      }
+                                      // Spaces and punctuation break the Xray
+                                      // client email key derived from this name.
+                                      if (!RegExp(
+                                        r'^[A-Za-z0-9_.-]+$',
+                                      ).hasMatch(value)) {
+                                        return 'Letters, numbers, _ . - only';
+                                      }
+                                      return null;
+                                    },
                                   ),
-                                  suffixIcon: Row(
-                                    mainAxisSize: MainAxisSize.min,
+                                  const SizedBox(height: 14),
+                                  TextFormField(
+                                    controller: _password,
+                                    obscureText: _obscure,
+                                    autocorrect: false,
+                                    enableSuggestions: false,
+                                    decoration: InputDecoration(
+                                      labelText: 'Password',
+                                      prefixIcon: const Icon(
+                                        Iconsax.lock,
+                                        size: 18,
+                                      ),
+                                      suffixIcon: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          IconButton(
+                                            tooltip: 'Generate',
+                                            onPressed: _generatePassword,
+                                            icon: const Icon(
+                                              Iconsax.refresh,
+                                              size: 17,
+                                            ),
+                                          ),
+                                          IconButton(
+                                            onPressed: () => setState(
+                                              () => _obscure = !_obscure,
+                                            ),
+                                            icon: Icon(
+                                              _obscure
+                                                  ? Iconsax.eye_slash
+                                                  : Iconsax.eye,
+                                              size: 17,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                    validator: (v) => (v ?? '').length < 6
+                                        ? 'At least 6 characters'
+                                        : null,
+                                  ),
+                                  const SizedBox(height: 22),
+                                  const AppSectionHeader(title: 'Choose plan'),
+                                  const SizedBox(height: 10),
+                                  _PlanPicker(
+                                    plans: _plans,
+                                    selected: _plan,
+                                    onChanged: (p) => setState(() => _plan = p),
+                                  ),
+                                  const SizedBox(height: 22),
+                                  const AppSectionHeader(title: 'Duration'),
+                                  const SizedBox(height: 10),
+                                  Row(
                                     children: [
-                                      IconButton(
-                                        tooltip: 'Generate',
-                                        onPressed: _generatePassword,
-                                        icon: const Icon(
-                                          Iconsax.refresh,
-                                          size: 17,
+                                      Expanded(
+                                        child: _Stepper(
+                                          label: 'Months',
+                                          value: _months,
+                                          max: 36,
+                                          onChanged: (v) =>
+                                              setState(() => _months = v),
                                         ),
                                       ),
-                                      IconButton(
-                                        onPressed: () => setState(
-                                          () => _obscure = !_obscure,
-                                        ),
-                                        icon: Icon(
-                                          _obscure
-                                              ? Iconsax.eye_slash
-                                              : Iconsax.eye,
-                                          size: 17,
+                                      const SizedBox(width: 12),
+                                      Expanded(
+                                        child: _Stepper(
+                                          label: 'Days',
+                                          value: _days,
+                                          max: 29,
+                                          onChanged: (v) =>
+                                              setState(() => _days = v),
                                         ),
                                       ),
                                     ],
                                   ),
-                                ),
-                                validator: (v) => (v ?? '').length < 6
-                                    ? 'At least 6 characters'
-                                    : null,
-                              ),
-                              const SizedBox(height: 22),
-                              const AppSectionHeader(title: 'Choose plan'),
-                              const SizedBox(height: 10),
-                              _PlanPicker(
-                                plans: _plans,
-                                selected: _plan,
-                                onChanged: (p) => setState(() => _plan = p),
-                              ),
-                              const SizedBox(height: 22),
-                              const AppSectionHeader(title: 'Duration'),
-                              const SizedBox(height: 10),
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: _Stepper(
-                                      label: 'Months',
-                                      value: _months,
-                                      max: 36,
-                                      onChanged: (v) =>
-                                          setState(() => _months = v),
+                                  if (_businessPlans.isNotEmpty) ...[
+                                    const SizedBox(height: 22),
+                                    _BusinessSection(
+                                      plans: _businessPlans,
+                                      selected: _businessPlan,
+                                      enabled: _enableBusiness,
+                                      onToggle: (v) =>
+                                          setState(() => _enableBusiness = v),
+                                      onChanged: (p) =>
+                                          setState(() => _businessPlan = p),
                                     ),
-                                  ),
-                                  const SizedBox(width: 12),
-                                  Expanded(
-                                    child: _Stepper(
-                                      label: 'Days',
-                                      value: _days,
-                                      max: 29,
-                                      onChanged: (v) =>
-                                          setState(() => _days = v),
-                                    ),
-                                  ),
+                                  ],
                                 ],
                               ),
-                              if (_businessPlans.isNotEmpty) ...[
-                                const SizedBox(height: 22),
-                                _BusinessSection(
-                                  plans: _businessPlans,
-                                  selected: _businessPlan,
-                                  enabled: _enableBusiness,
-                                  onToggle: (v) =>
-                                      setState(() => _enableBusiness = v),
-                                  onChanged: (p) =>
-                                      setState(() => _businessPlan = p),
-                                ),
-                              ],
-                            ],
+                            ),
                           ),
                         ),
-                      ),
+                        _CostBar(
+                          totalCost: _totalCost,
+                          monthlyRate: _chargePrice,
+                          isBusiness: _enableBusiness,
+                          canAfford: _canAfford,
+                          busy: _busy,
+                          onCreate: _create,
+                        ),
+                      ],
                     ),
-                    _CostBar(
-                      totalCost: _totalCost,
-                      monthlyRate: _chargePrice,
-                      isBusiness: _enableBusiness,
-                      canAfford: _canAfford,
-                      busy: _busy,
-                      onCreate: _create,
-                    ),
-                  ],
-                ),
+                  ),
+                ],
               ),
             ),
+    );
+  }
+}
+
+/// Hero as a backdrop, not a banner.
+///
+/// Anchored to the top and faded out downward so the form scrolls over it.
+/// Sitting in the column as a 150px image, it pushed the first field below the
+/// fold on a short screen — on a form the illustration is context, not
+/// content, and should not cost the agent a scroll before they can type.
+class _HeroBackdrop extends StatelessWidget {
+  const _HeroBackdrop();
+
+  @override
+  Widget build(BuildContext context) {
+    return IgnorePointer(
+      child: Align(
+        alignment: Alignment.topCenter,
+        child: ShaderMask(
+          shaderCallback: (rect) => const LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            stops: [0.0, 0.55, 1.0],
+            colors: [Colors.black, Colors.black26, Colors.transparent],
+          ).createShader(rect),
+          blendMode: BlendMode.dstIn,
+          child: Opacity(
+            // Faint enough that text over it stays legible without a scrim.
+            opacity: 0.30,
+            child: Image.asset(
+              'assets/images/user_hero.png',
+              height: 260,
+              fit: BoxFit.contain,
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

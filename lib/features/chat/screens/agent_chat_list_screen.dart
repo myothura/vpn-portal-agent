@@ -259,95 +259,100 @@ class _AgentChatListScreenState extends State<AgentChatListScreen> {
 
     return Scaffold(
       backgroundColor: AppColors.background,
-      body: SafeArea(
-        bottom: false,
-        child: Column(
-          children: [
-            const SizedBox(height: 10),
-            _Header(
-              unread: unread,
-              selfRenewal: _selfRenewal,
-              onToggleSelfRenewal: _toggleSelfRenewal,
-              onBroadcast: _broadcast,
-            ),
-            AnimatedSize(
-              duration: const Duration(milliseconds: 200),
-              curve: Curves.easeOutCubic,
-              alignment: Alignment.topCenter,
-              child: !_searchOpen
-                  ? const SizedBox(width: double.infinity)
-                  : Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
-                      child: TextField(
-                        controller: _searchController,
-                        focusNode: _searchFocus,
-                        textInputAction: TextInputAction.search,
-                        onChanged: _onSearchChanged,
-                        style: Theme.of(context).textTheme.bodyLarge,
-                        decoration: InputDecoration(
-                          hintText: 'Search by username',
-                          isDense: true,
-                          contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 14,
-                            vertical: 10,
-                          ),
-                          prefixIconConstraints: const BoxConstraints(
-                            minWidth: 38,
-                            minHeight: 38,
-                          ),
-                          prefixIcon: const Icon(
-                            Iconsax.search_normal_1,
-                            size: 17,
-                            color: AppColors.textTertiary,
-                          ),
-                          suffixIcon: IconButton(
-                            icon: const Icon(
-                              Iconsax.close_circle,
-                              size: 18,
-                              color: AppColors.textTertiary,
+      body: Stack(
+        children: [
+          const _ChatHeroBackdrop(),
+          SafeArea(
+            bottom: false,
+            child: Column(
+              children: [
+                const SizedBox(height: 10),
+                _Header(
+                  unread: unread,
+                  selfRenewal: _selfRenewal,
+                  onToggleSelfRenewal: _toggleSelfRenewal,
+                  onBroadcast: _broadcast,
+                ),
+                AnimatedSize(
+                  duration: const Duration(milliseconds: 200),
+                  curve: Curves.easeOutCubic,
+                  alignment: Alignment.topCenter,
+                  child: !_searchOpen
+                      ? const SizedBox(width: double.infinity)
+                      : Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+                          child: TextField(
+                            controller: _searchController,
+                            focusNode: _searchFocus,
+                            textInputAction: TextInputAction.search,
+                            onChanged: _onSearchChanged,
+                            style: Theme.of(context).textTheme.bodyLarge,
+                            decoration: InputDecoration(
+                              hintText: 'Search by username',
+                              isDense: true,
+                              contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 14,
+                                vertical: 10,
+                              ),
+                              prefixIconConstraints: const BoxConstraints(
+                                minWidth: 38,
+                                minHeight: 38,
+                              ),
+                              prefixIcon: const Icon(
+                                Iconsax.search_normal_1,
+                                size: 17,
+                                color: AppColors.textTertiary,
+                              ),
+                              suffixIcon: IconButton(
+                                icon: const Icon(
+                                  Iconsax.close_circle,
+                                  size: 18,
+                                  color: AppColors.textTertiary,
+                                ),
+                                onPressed: _toggleSearch,
+                              ),
                             ),
-                            onPressed: _toggleSearch,
                           ),
                         ),
-                      ),
-                    ),
-            ),
-            const SizedBox(height: 12),
-            Expanded(
-              child: _loading
-                  ? const _ListSkeleton()
-                  : _users.isEmpty
-                  ? _buildEmpty()
-                  : RefreshIndicator(
-                      onRefresh: () => _load(silent: true),
-                      color: AppColors.accentInk,
-                      backgroundColor: AppColors.surface,
-                      child: Material(
-                        color: AppColors.surface,
-                        child: ListView.builder(
-                          controller: _scrollController,
-                          padding: const EdgeInsets.only(bottom: 96),
-                          physics: const AlwaysScrollableScrollPhysics(
-                            parent: BouncingScrollPhysics(),
+                ),
+                const SizedBox(height: 12),
+                Expanded(
+                  child: _loading
+                      ? const _ListSkeleton()
+                      : _users.isEmpty
+                      ? _buildEmpty()
+                      : RefreshIndicator(
+                          onRefresh: () => _load(silent: true),
+                          color: AppColors.accentInk,
+                          backgroundColor: AppColors.surface,
+                          child: Material(
+                            color: AppColors.surface,
+                            child: ListView.builder(
+                              controller: _scrollController,
+                              padding: const EdgeInsets.only(bottom: 96),
+                              physics: const AlwaysScrollableScrollPhysics(
+                                parent: BouncingScrollPhysics(),
+                              ),
+                              itemExtent: _ChatRow.height,
+                              itemCount: _users.length + 1,
+                              itemBuilder: (context, i) {
+                                if (i == _users.length) return _buildFooter();
+                                final user = _users[i];
+                                return _ChatRow(
+                                  key: ValueKey(user['id']),
+                                  user: user,
+                                  showDivider: i < _users.length - 1,
+                                  onTap: () => _openChat(user),
+                                );
+                              },
+                            ),
                           ),
-                          itemExtent: _ChatRow.height,
-                          itemCount: _users.length + 1,
-                          itemBuilder: (context, i) {
-                            if (i == _users.length) return _buildFooter();
-                            final user = _users[i];
-                            return _ChatRow(
-                              key: ValueKey(user['id']),
-                              user: user,
-                              showDivider: i < _users.length - 1,
-                              onTap: () => _openChat(user),
-                            );
-                          },
                         ),
-                      ),
-                    ),
+                ),
+              ],
             ),
-          ],
-        ),
+          ),
+        ],
       ),
       floatingActionButton: FloatingActionButton.small(
         heroTag: 'chat-search',
@@ -907,6 +912,51 @@ class _ListSkeleton extends StatelessWidget {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Hero behind the header, faded out before the list starts.
+///
+/// The composition leaves its middle empty, which is where the title and
+/// controls sit; the artwork occupies the margins the screen was not using.
+/// Not a banner in the column — that would push the first conversation down
+/// the screen on a list whose whole job is showing conversations.
+class _ChatHeroBackdrop extends StatelessWidget {
+  const _ChatHeroBackdrop();
+
+  @override
+  Widget build(BuildContext context) {
+    return IgnorePointer(
+      // Below the status bar, not under it: the artwork was running up behind
+      // the clock and the battery icon, which is neither legible nor intended.
+      child: SafeArea(
+        bottom: false,
+        child: Align(
+          alignment: Alignment.topCenter,
+          child: ShaderMask(
+            shaderCallback: (rect) => const LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              stops: [0.0, 0.6, 1.0],
+              colors: [Colors.black, Colors.black26, Colors.transparent],
+            ).createShader(rect),
+            blendMode: BlendMode.dstIn,
+            child: Opacity(
+              opacity: 0.35,
+              child: Image.asset(
+                'assets/images/chat_hero.png',
+                width: double.infinity,
+                // contain, not cover: cover cropped the artwork to the band's
+                // height and took the figure's head with it. The whole
+                // illustration is shown, scaled to the screen width, and the
+                // gradient fades its lower half into the list.
+                fit: BoxFit.contain,
+              ),
+            ),
+          ),
         ),
       ),
     );

@@ -235,114 +235,162 @@ class _EditUserScreenState extends State<EditUserScreen> {
           ? const AppLoader()
           : GestureDetector(
               onTap: () => FocusScope.of(context).unfocus(),
-              child: SafeArea(
-                child: Column(
-                  children: [
-                    Expanded(
-                      child: SingleChildScrollView(
-                        padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-                        physics: const BouncingScrollPhysics(),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            _SubscriptionCard(
-                              user: widget.user,
-                              currentExpiry: _currentExpiry,
-                              newExpiry: _newExpiry,
-                            ),
-                            const SizedBox(height: 22),
-                            const AppSectionHeader(title: 'Status'),
-                            const SizedBox(height: 10),
-                            _StatusToggle(
-                              status: _status,
-                              onChanged: (v) => setState(() => _status = v),
-                            ),
-                            const SizedBox(height: 22),
-                            const AppSectionHeader(title: 'Plan'),
-                            const SizedBox(height: 10),
-                            _PlanRow(
-                              plans: _plans,
-                              selected: _plan,
-                              onChanged: (p) => setState(() => _plan = p),
-                            ),
-                            const SizedBox(height: 22),
-                            const AppSectionHeader(
-                              title: 'Extend subscription',
-                            ),
-                            const SizedBox(height: 10),
-                            Row(
+              child: Stack(
+                children: [
+                  const _HeroBackdrop(),
+                  SafeArea(
+                    child: Column(
+                      children: [
+                        Expanded(
+                          child: SingleChildScrollView(
+                            padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+                            physics: const BouncingScrollPhysics(),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
                               children: [
-                                Expanded(
-                                  child: _Stepper(
-                                    label: 'Months',
-                                    value: _months,
-                                    max: 36,
-                                    onChanged: (v) =>
-                                        setState(() => _months = v),
+                                _SubscriptionCard(
+                                  user: widget.user,
+                                  currentExpiry: _currentExpiry,
+                                  newExpiry: _newExpiry,
+                                ),
+                                const SizedBox(height: 22),
+                                const AppSectionHeader(title: 'Status'),
+                                const SizedBox(height: 10),
+                                _StatusToggle(
+                                  status: _status,
+                                  onChanged: (v) => setState(() => _status = v),
+                                ),
+                                const SizedBox(height: 22),
+                                const AppSectionHeader(title: 'Plan'),
+                                const SizedBox(height: 10),
+                                _PlanRow(
+                                  plans: _plans,
+                                  selected: _plan,
+                                  onChanged: (p) => setState(() => _plan = p),
+                                ),
+                                const SizedBox(height: 22),
+                                const AppSectionHeader(
+                                  title: 'Extend subscription',
+                                ),
+                                const SizedBox(height: 10),
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: _Stepper(
+                                        label: 'Months',
+                                        value: _months,
+                                        max: 36,
+                                        onChanged: (v) =>
+                                            setState(() => _months = v),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 12),
+                                    Expanded(
+                                      child: _Stepper(
+                                        label: 'Days',
+                                        value: _days,
+                                        max: 29,
+                                        onChanged: (v) =>
+                                            setState(() => _days = v),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 22),
+                                const AppSectionHeader(title: 'Password'),
+                                const SizedBox(height: 10),
+                                TextField(
+                                  controller: _password,
+                                  obscureText: _obscure,
+                                  autocorrect: false,
+                                  enableSuggestions: false,
+                                  onChanged: (_) => setState(() {}),
+                                  decoration: InputDecoration(
+                                    hintText: 'Leave blank to keep current',
+                                    prefixIcon: const Icon(
+                                      Iconsax.lock,
+                                      size: 18,
+                                    ),
+                                    suffixIcon: IconButton(
+                                      onPressed: () =>
+                                          setState(() => _obscure = !_obscure),
+                                      icon: Icon(
+                                        _obscure
+                                            ? Iconsax.eye_slash
+                                            : Iconsax.eye,
+                                        size: 17,
+                                      ),
+                                    ),
                                   ),
                                 ),
-                                const SizedBox(width: 12),
-                                Expanded(
-                                  child: _Stepper(
-                                    label: 'Days',
-                                    value: _days,
-                                    max: 29,
-                                    onChanged: (v) => setState(() => _days = v),
+                                if (_businessPlans.isNotEmpty) ...[
+                                  const SizedBox(height: 22),
+                                  _BusinessCard(
+                                    active: _hasBusinessPlan,
+                                    activeName: _businessPlanName,
+                                    plans: _businessPlans,
+                                    selected: _businessPlan,
+                                    busy: _businessBusy,
+                                    onChanged: (p) =>
+                                        setState(() => _businessPlan = p),
+                                    onAssign: _assignBusiness,
+                                    onRemove: _removeBusiness,
                                   ),
-                                ),
+                                ],
                               ],
                             ),
-                            const SizedBox(height: 22),
-                            const AppSectionHeader(title: 'Password'),
-                            const SizedBox(height: 10),
-                            TextField(
-                              controller: _password,
-                              obscureText: _obscure,
-                              autocorrect: false,
-                              enableSuggestions: false,
-                              onChanged: (_) => setState(() {}),
-                              decoration: InputDecoration(
-                                hintText: 'Leave blank to keep current',
-                                prefixIcon: const Icon(Iconsax.lock, size: 18),
-                                suffixIcon: IconButton(
-                                  onPressed: () =>
-                                      setState(() => _obscure = !_obscure),
-                                  icon: Icon(
-                                    _obscure ? Iconsax.eye_slash : Iconsax.eye,
-                                    size: 17,
-                                  ),
-                                ),
-                              ),
-                            ),
-                            if (_businessPlans.isNotEmpty) ...[
-                              const SizedBox(height: 22),
-                              _BusinessCard(
-                                active: _hasBusinessPlan,
-                                activeName: _businessPlanName,
-                                plans: _businessPlans,
-                                selected: _businessPlan,
-                                busy: _businessBusy,
-                                onChanged: (p) =>
-                                    setState(() => _businessPlan = p),
-                                onAssign: _assignBusiness,
-                                onRemove: _removeBusiness,
-                              ),
-                            ],
-                          ],
+                          ),
                         ),
-                      ),
+                        _SaveBar(
+                          cost: _cost,
+                          addedDays: _addedDays,
+                          enabled: _hasChanges,
+                          busy: _saving,
+                          onSave: _save,
+                        ),
+                      ],
                     ),
-                    _SaveBar(
-                      cost: _cost,
-                      addedDays: _addedDays,
-                      enabled: _hasChanges,
-                      busy: _saving,
-                      onSave: _save,
-                    ),
-                  ],
-                ),
+                  ),
+                ],
               ),
             ),
+    );
+  }
+}
+
+/// Hero as a backdrop, not a banner.
+///
+/// Anchored to the top and faded out downward so the form scrolls over it.
+/// Sitting in the column as a 150px image, it pushed the first field below the
+/// fold on a short screen — on a form the illustration is context, not
+/// content, and should not cost the agent a scroll before they can type.
+class _HeroBackdrop extends StatelessWidget {
+  const _HeroBackdrop();
+
+  @override
+  Widget build(BuildContext context) {
+    return IgnorePointer(
+      child: Align(
+        alignment: Alignment.topCenter,
+        child: ShaderMask(
+          shaderCallback: (rect) => const LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            stops: [0.0, 0.55, 1.0],
+            colors: [Colors.black, Colors.black26, Colors.transparent],
+          ).createShader(rect),
+          blendMode: BlendMode.dstIn,
+          child: Opacity(
+            // Faint enough that text over it stays legible without a scrim.
+            opacity: 0.30,
+            child: Image.asset(
+              'assets/images/user_hero.png',
+              height: 260,
+              fit: BoxFit.contain,
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
@@ -450,6 +498,7 @@ class _StatusToggle extends StatelessWidget {
             label: 'Active',
             icon: Iconsax.tick_circle,
             color: AppColors.success,
+            wash: AppColors.successWash,
             selected: status == 'active',
             onTap: () => onChanged('active'),
           ),
@@ -460,6 +509,7 @@ class _StatusToggle extends StatelessWidget {
             label: 'Paused',
             icon: Iconsax.pause_circle,
             color: AppColors.neutral,
+            wash: AppColors.neutralWash,
             selected: status != 'active',
             onTap: () => onChanged('inactive'),
           ),
@@ -473,6 +523,7 @@ class _StatusOption extends StatelessWidget {
   final String label;
   final IconData icon;
   final Color color;
+  final Color wash;
   final bool selected;
   final VoidCallback onTap;
 
@@ -480,51 +531,41 @@ class _StatusOption extends StatelessWidget {
     required this.label,
     required this.icon,
     required this.color,
+    required this.wash,
     required this.selected,
     required this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
-    // Solid when chosen, matching the plan tiles. A wash reads as "slightly
-    // tinted" next to a white sibling, which is a weak signal for a switch
-    // that decides whether the account works at all.
-    return Material(
-      color: selected ? color : AppColors.surface,
-      borderRadius: BorderRadius.circular(AppTheme.radiusMd),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(AppTheme.radiusMd),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(AppTheme.radiusMd),
-            border: Border.all(color: selected ? color : AppColors.border),
+    // A tint rather than a solid fill. Solid put two large blocks of colour
+    // above the plan tiles and outweighed them; status is a state, not the
+    // headline of the screen.
+    return AppCard(
+      onTap: onTap,
+      radius: AppTheme.radiusMd,
+      showShadow: false,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+      tone: selected ? SurfaceTone.wash : SurfaceTone.plain,
+      washColor: wash,
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(
+            icon,
+            size: 17,
+            color: selected ? color : AppColors.textTertiary,
           ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(
-                icon,
-                size: 17,
-                color: selected
-                    ? AppColors.textOnAccent
-                    : AppColors.textTertiary,
-              ),
-              const SizedBox(width: 8),
-              Text(
-                label,
-                style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w700,
-                  color: selected
-                      ? AppColors.textOnAccent
-                      : AppColors.textSecondary,
-                ),
-              ),
-            ],
+          const SizedBox(width: 8),
+          Text(
+            label,
+            style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+              fontSize: 14,
+              fontWeight: FontWeight.w700,
+              color: selected ? color : AppColors.textSecondary,
+            ),
           ),
-        ),
+        ],
       ),
     );
   }
