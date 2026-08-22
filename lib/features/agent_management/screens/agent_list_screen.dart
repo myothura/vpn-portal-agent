@@ -129,10 +129,13 @@ class _AgentListScreenState extends State<AgentListScreen> {
   }
 
   Future<void> _openEditor([AgentModel? agent]) async {
-    final changed = await Navigator.push<bool>(
+    // rootNavigator: a form with a docked action bar owns the screen. Pushed
+    // inside the tab, the bar had to clear the nav bar underneath it, which
+    // left it floating rather than sitting on the bottom edge.
+    final changed = await Navigator.of(
       context,
-      AppTransitions.slide(CreateEditAgentScreen(agent: agent)),
-    );
+      rootNavigator: true,
+    ).push<bool>(AppTransitions.slide(CreateEditAgentScreen(agent: agent)));
     if (changed == true) _load();
   }
 
