@@ -1,189 +1,61 @@
-import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:iconsax/iconsax.dart';
 import 'package:intl/intl.dart';
+
 import 'package:vpn_agent_app/core/theme/app_colors.dart';
+import 'package:vpn_agent_app/core/theme/app_theme.dart';
+import 'package:vpn_agent_app/shared_widgets/ui/app_surface.dart';
+
 import 'package:vpn_agent_app/features/users/models/plan_model.dart';
 import 'package:vpn_agent_app/features/users/models/vpn_user_model.dart';
 import 'package:vpn_agent_app/features/users/services/user_management_service.dart';
 
-class LiquidGlassContainer extends StatelessWidget {
-  final Widget child;
-  final double blurSigma;
-  final double opacity;
-  final BorderRadius? borderRadius;
-  final EdgeInsetsGeometry padding;
-  final Color? tintColor;
-  final bool withBorder;
-  final VoidCallback? onTap;
-  final LinearGradient? gradient;
-
-  const LiquidGlassContainer({
-    super.key,
-    required this.child,
-    this.blurSigma = 20.0,
-    this.opacity = 0.08,
-    this.borderRadius,
-    this.padding = EdgeInsets.zero,
-    this.tintColor,
-    this.withBorder = true,
-    this.onTap,
-    this.gradient,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final radius = borderRadius ?? BorderRadius.circular(20);
-    Widget content = ClipRRect(
-      borderRadius: radius,
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: blurSigma, sigmaY: blurSigma),
-        child: Container(
-          padding: padding,
-          decoration: BoxDecoration(
-            color: (tintColor ?? Colors.white).withOpacity(opacity),
-            borderRadius: radius,
-            border: withBorder
-                ? Border.all(color: Colors.white.withOpacity(0.12), width: 1.0)
-                : null,
-            gradient:
-                gradient ??
-                LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [
-                    (tintColor ?? Colors.white).withOpacity(opacity + 0.05),
-                    (tintColor ?? Colors.white).withOpacity(opacity),
-                  ],
-                ),
-          ),
-          child: child,
-        ),
-      ),
-    );
-
-    if (onTap != null) {
-      return GestureDetector(onTap: onTap, child: content);
-    }
-    return content;
-  }
-}
-
-class ScaleButton extends StatefulWidget {
-  final Widget child;
-  final VoidCallback? onTap;
-  final double scaleAmount;
-  const ScaleButton({
-    super.key,
-    required this.child,
-    required this.onTap,
-    this.scaleAmount = 0.95,
-  });
-  @override
-  State<ScaleButton> createState() => _ScaleButtonState();
-}
-
-class _ScaleButtonState extends State<ScaleButton>
-    with SingleTickerProviderStateMixin {
-  late AnimationController _controller;
-  late Animation<double> _scaleAnimation;
-  @override
-  void initState() {
-    super.initState();
-    _controller = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 100),
-    );
-    _scaleAnimation = Tween<double>(
-      begin: 1.0,
-      end: widget.scaleAmount,
-    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeInOut));
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTapDown: (_) => _controller.forward(),
-      onTapUp: (_) {
-        _controller.reverse();
-        widget.onTap?.call();
-        HapticFeedback.lightImpact();
-      },
-      onTapCancel: () => _controller.reverse(),
-      child: ScaleTransition(scale: _scaleAnimation, child: widget.child),
-    );
-  }
-}
-
 class EditUserScreen extends StatefulWidget {
   final VpnUser user;
+
   const EditUserScreen({super.key, required this.user});
 
   @override
   State<EditUserScreen> createState() => _EditUserScreenState();
 }
 
-class _EditUserScreenState extends State<EditUserScreen>
-    with SingleTickerProviderStateMixin {
+class _EditUserScreenState extends State<EditUserScreen> {
   final _userService = UserManagementService();
+  final _password = TextEditingController();
+
   List<Plan> _plans = [];
-  Plan? _selectedPlan;
+  Plan? _plan;
 
   List<BusinessPlan> _businessPlans = [];
-  BusinessPlan? _selectedBusinessPlan;
-  bool _hasBusinessPlan = false;
-  String? _currentBusinessPlanName;
-  bool _businessLoading = false;
+  BusinessPlan? _businessPlan;
+  late bool _hasBusinessPlan;
+  String? _businessPlanName;
 
-  final _monthsController = TextEditingController(text: '0');
-  final _daysController = TextEditingController(text: '0');
-  final _passwordController = TextEditingController();
+  /// Extension to add, in months and days. Both default to zero: editing a
+  /// user is usually about status or password, and silently extending a
+  /// subscription because a field defaulted to 1 would cost the agent credit.
+  int _months = 0;
+  int _days = 0;
 
-  String _status = 'active';
-  bool _isLoading = false;
-  bool _isFetching = true;
-  bool _obscurePassword = true;
-
-  late AnimationController _animController;
-  late Animation<double> _fadeAnim;
-  late Animation<Offset> _slideAnim;
+  late String _status;
+  bool _saving = false;
+  bool _businessBusy = false;
+  bool _loading = true;
+  bool _obscure = true;
 
   @override
   void initState() {
     super.initState();
     _status = widget.user.status;
     _hasBusinessPlan = widget.user.hasBusinessPlan;
-    _currentBusinessPlanName = widget.user.businessPlanName;
-
-    _animController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 800),
-    );
-    _fadeAnim = CurvedAnimation(parent: _animController, curve: Curves.easeOut);
-    _slideAnim = Tween<Offset>(begin: const Offset(0, 0.1), end: Offset.zero)
-        .animate(
-          CurvedAnimation(parent: _animController, curve: Curves.easeOutQuart),
-        );
-
+    _businessPlanName = widget.user.businessPlanName;
     _fetchData();
-    _monthsController.addListener(() => setState(() {}));
-    _daysController.addListener(() => setState(() {}));
   }
 
   @override
   void dispose() {
-    _monthsController.dispose();
-    _daysController.dispose();
-    _passwordController.dispose();
-    _animController.dispose();
+    _password.dispose();
     super.dispose();
   }
 
@@ -192,1397 +64,969 @@ class _EditUserScreenState extends State<EditUserScreen>
       _userService.getAvailablePlans(),
       _userService.getBusinessPlans(),
     ]);
+    if (!mounted) return;
 
-    _plans = results[0] as List<Plan>;
-    _businessPlans = results[1] as List<BusinessPlan>;
+    setState(() {
+      _plans = results[0] as List<Plan>;
+      _businessPlans = results[1] as List<BusinessPlan>;
 
-    if (mounted) {
-      if (_plans.isNotEmpty) {
-        try {
-          _selectedPlan = _plans.firstWhere(
-            (p) => p.planName == widget.user.planName,
-          );
-        } catch (e) {
-          _selectedPlan = _plans.first;
-        }
-      }
-      if (_businessPlans.isNotEmpty) {
-        _selectedBusinessPlan = _businessPlans.first;
-      }
-      setState(() => _isFetching = false);
-      _animController.forward();
-    }
+      // Matched by name: VpnUser carries plan_name, not plan_id. If the plan
+      // was renamed server-side this falls back to the first rather than
+      // leaving the selection empty and blocking save.
+      _plan = _plans.isEmpty
+          ? null
+          : _plans.firstWhere(
+              (p) => p.planName == widget.user.planName,
+              orElse: () => _plans.first,
+            );
+
+      _businessPlan = _businessPlans.isEmpty ? null : _businessPlans.first;
+      _loading = false;
+    });
   }
 
-  Future<void> _updateUser() async {
+  // ── Derived ──
+
+  int get _addedDays => _months * 30 + _days;
+
+  bool get _statusChanged => _status != widget.user.status;
+  bool get _planChanged =>
+      _plan != null && _plan!.planName != widget.user.planName;
+  bool get _passwordChanged => _password.text.isNotEmpty;
+
+  /// Save is enabled only when something would actually change. The old screen
+  /// let an agent submit a no-op, which still cost a round-trip and re-synced
+  /// the user across every server on their plan.
+  bool get _hasChanges =>
+      _addedDays > 0 || _statusChanged || _planChanged || _passwordChanged;
+
+  DateTime? get _currentExpiry {
+    final raw = widget.user.expiryDate;
+    if (raw == null) return null;
+    return DateTime.tryParse(raw);
+  }
+
+  DateTime? get _newExpiry {
+    if (_addedDays == 0) return null;
+    // Extending an expired account starts from today, not from the lapsed
+    // date — otherwise adding a month to something three months dead grants
+    // nothing and the agent has no way to see that before paying.
+    final base = _currentExpiry;
+    final now = DateTime.now();
+    final from = (base == null || base.isBefore(now)) ? now : base;
+    return from.add(Duration(days: _addedDays));
+  }
+
+  int get _cost => ((_plan?.price ?? 0) / 30 * _addedDays).ceil();
+
+  // ── Actions ──
+
+  Future<void> _save() async {
+    if (_plan == null || !_hasChanges) return;
     HapticFeedback.mediumImpact();
-    if (_selectedPlan == null) return;
-    setState(() => _isLoading = true);
+    setState(() => _saving = true);
 
-    final months = int.tryParse(_monthsController.text) ?? 0;
-    final days = int.tryParse(_daysController.text) ?? 0;
-
-    final success = await _userService.updateUser(
+    final ok = await _userService.updateUser(
       userId: widget.user.id,
-      planId: _selectedPlan!.id,
-      months: months,
-      days: days,
+      planId: _plan!.id,
+      months: _months,
+      days: _days,
       status: _status,
-      password: _passwordController.text.isNotEmpty
-          ? _passwordController.text
-          : null,
+      password: _passwordChanged ? _password.text : null,
     );
 
-    if (mounted) {
-      setState(() => _isLoading = false);
-      if (success) {
-        Navigator.pop(context, true);
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text("User updated successfully"),
-            backgroundColor: AppColors.accentGreen,
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text("Update failed."),
-            backgroundColor: Colors.redAccent,
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
-      }
+    if (!mounted) return;
+    setState(() => _saving = false);
+
+    if (!ok) {
+      _toast('Could not save. Check your balance and try again.');
+      return;
     }
+
+    final messenger = ScaffoldMessenger.of(context);
+    Navigator.of(context).pop(true);
+    messenger.showSnackBar(const SnackBar(content: Text('User updated.')));
   }
 
-  Future<void> _assignBusinessPlan() async {
-    if (_selectedBusinessPlan == null) return;
+  Future<void> _assignBusiness() async {
+    if (_businessPlan == null) return;
     HapticFeedback.mediumImpact();
-    setState(() => _businessLoading = true);
+    setState(() => _businessBusy = true);
 
     final result = await _userService.assignBusinessPlan(
       widget.user.id,
-      _selectedBusinessPlan!.id,
+      _businessPlan!.id,
     );
 
-    if (mounted) {
-      setState(() => _businessLoading = false);
+    if (!mounted) return;
+    setState(() {
+      _businessBusy = false;
+      // Stay on the screen and reflect the change in place. Popping on assign
+      // meant an agent adding a business plan and then wanting to extend the
+      // subscription had to find the user and open them again.
       if (result['success'] == true) {
-        Navigator.pop(context, true);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(result['message']),
-            backgroundColor: const Color(0xFFF97316),
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(result['message']),
-            backgroundColor: Colors.redAccent,
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
+        _hasBusinessPlan = true;
+        _businessPlanName = _businessPlan!.planName;
       }
-    }
+    });
+    _toast(result['message']?.toString() ?? 'Business plan updated.');
   }
 
-  Future<void> _removeBusinessPlan() async {
-    HapticFeedback.mediumImpact();
-    setState(() => _businessLoading = true);
+  Future<void> _removeBusiness() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        icon: const AppIconBadge(
+          icon: Iconsax.briefcase,
+          color: AppColors.orange,
+          background: AppColors.orangeWash,
+          size: 22,
+          padding: 12,
+        ),
+        title: const Text('Remove business plan?'),
+        content: Text(
+          "${widget.user.username} will lose access to the business servers.",
+          style: Theme.of(ctx).textTheme.bodyMedium,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: AppColors.orange),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Remove'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
 
+    HapticFeedback.mediumImpact();
+    setState(() => _businessBusy = true);
     final result = await _userService.removeBusinessPlan(widget.user.id);
 
-    if (mounted) {
-      setState(() => _businessLoading = false);
+    if (!mounted) return;
+    setState(() {
+      _businessBusy = false;
       if (result['success'] == true) {
-        Navigator.pop(context, true);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(result['message']),
-            backgroundColor: AppColors.accentGreen,
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(result['message']),
-            backgroundColor: Colors.redAccent,
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
+        _hasBusinessPlan = false;
+        _businessPlanName = null;
       }
-    }
+    });
+    _toast(result['message']?.toString() ?? 'Business plan removed.');
   }
 
-  void _showRemoveBusinessConfirm() {
-    showDialog(
-      context: context,
-      builder: (ctx) => BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
-        child: Dialog(
-          backgroundColor: Colors.transparent,
-          insetPadding: const EdgeInsets.all(20),
-          child: LiquidGlassContainer(
-            borderRadius: BorderRadius.circular(28),
-            padding: const EdgeInsets.all(24),
-            opacity: 0.15,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFF97316).withOpacity(0.15),
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Icon(
-                    Iconsax.briefcase,
-                    color: Color(0xFFF97316),
-                    size: 32,
-                  ),
-                ),
-                const SizedBox(height: 20),
-                Text(
-                  "Remove Business Plan?",
-                  style: GoogleFonts.exo2(
-                    color: Colors.white,
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  "This will revoke Business server access for '${widget.user.username}'. Standard servers will remain active.",
-                  style: GoogleFonts.ibmPlexSans(
-                    color: Colors.white70,
-                    fontSize: 14,
-                    height: 1.5,
-                  ),
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 28),
-                Row(
+  void _toast(String message) {
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  // ── Build ──
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: AppColors.background,
+      appBar: AppBar(title: Text(widget.user.username)),
+      body: _loading
+          ? const AppLoader()
+          : GestureDetector(
+              onTap: () => FocusScope.of(context).unfocus(),
+              child: SafeArea(
+                child: Column(
                   children: [
                     Expanded(
-                      child: ScaleButton(
-                        onTap: () => Navigator.pop(ctx),
-                        child: Container(
-                          height: 50,
-                          decoration: BoxDecoration(
-                            color: Colors.white.withOpacity(0.08),
-                            borderRadius: BorderRadius.circular(16),
-                          ),
-                          child: Center(
-                            child: Text(
-                              "Cancel",
-                              style: GoogleFonts.ibmPlexSans(
-                                color: Colors.white70,
-                                fontWeight: FontWeight.bold,
+                      child: SingleChildScrollView(
+                        padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+                        physics: const BouncingScrollPhysics(),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            _SubscriptionCard(
+                              user: widget.user,
+                              currentExpiry: _currentExpiry,
+                              newExpiry: _newExpiry,
+                            ),
+                            const SizedBox(height: 22),
+                            const AppSectionHeader(title: 'Status'),
+                            const SizedBox(height: 10),
+                            _StatusToggle(
+                              status: _status,
+                              onChanged: (v) => setState(() => _status = v),
+                            ),
+                            const SizedBox(height: 22),
+                            const AppSectionHeader(title: 'Plan'),
+                            const SizedBox(height: 10),
+                            _PlanRow(
+                              plans: _plans,
+                              selected: _plan,
+                              onChanged: (p) => setState(() => _plan = p),
+                            ),
+                            const SizedBox(height: 22),
+                            const AppSectionHeader(
+                              title: 'Extend subscription',
+                            ),
+                            const SizedBox(height: 10),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: _Stepper(
+                                    label: 'Months',
+                                    value: _months,
+                                    max: 36,
+                                    onChanged: (v) =>
+                                        setState(() => _months = v),
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: _Stepper(
+                                    label: 'Days',
+                                    value: _days,
+                                    max: 29,
+                                    onChanged: (v) => setState(() => _days = v),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 22),
+                            const AppSectionHeader(title: 'Password'),
+                            const SizedBox(height: 10),
+                            TextField(
+                              controller: _password,
+                              obscureText: _obscure,
+                              autocorrect: false,
+                              enableSuggestions: false,
+                              onChanged: (_) => setState(() {}),
+                              decoration: InputDecoration(
+                                hintText: 'Leave blank to keep current',
+                                prefixIcon: const Icon(Iconsax.lock, size: 18),
+                                suffixIcon: IconButton(
+                                  onPressed: () =>
+                                      setState(() => _obscure = !_obscure),
+                                  icon: Icon(
+                                    _obscure ? Iconsax.eye_slash : Iconsax.eye,
+                                    size: 17,
+                                  ),
+                                ),
                               ),
                             ),
-                          ),
+                            if (_businessPlans.isNotEmpty) ...[
+                              const SizedBox(height: 22),
+                              _BusinessCard(
+                                active: _hasBusinessPlan,
+                                activeName: _businessPlanName,
+                                plans: _businessPlans,
+                                selected: _businessPlan,
+                                busy: _businessBusy,
+                                onChanged: (p) =>
+                                    setState(() => _businessPlan = p),
+                                onAssign: _assignBusiness,
+                                onRemove: _removeBusiness,
+                              ),
+                            ],
+                          ],
                         ),
                       ),
                     ),
-                    const SizedBox(width: 16),
-                    Expanded(
-                      child: ScaleButton(
-                        onTap: () {
-                          Navigator.pop(ctx);
-                          _removeBusinessPlan();
-                        },
-                        child: Container(
-                          height: 50,
-                          decoration: BoxDecoration(
-                            color: const Color(0xFFF97316).withOpacity(0.2),
-                            borderRadius: BorderRadius.circular(16),
-                            border: Border.all(
-                              color: const Color(0xFFF97316).withOpacity(0.5),
-                            ),
-                          ),
-                          child: Center(
-                            child: Text(
-                              "Remove",
-                              style: GoogleFonts.ibmPlexSans(
-                                color: Colors.white,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
+                    _SaveBar(
+                      cost: _cost,
+                      addedDays: _addedDays,
+                      enabled: _hasChanges,
+                      busy: _saving,
+                      onSave: _save,
                     ),
                   ],
                 ),
-              ],
+              ),
             ),
+    );
+  }
+}
+
+// ── Pieces ────────────────────────────────────────────────────────────────
+
+/// Where the subscription stands, and where this edit would move it.
+class _SubscriptionCard extends StatelessWidget {
+  final VpnUser user;
+  final DateTime? currentExpiry;
+  final DateTime? newExpiry;
+
+  const _SubscriptionCard({
+    required this.user,
+    required this.currentExpiry,
+    required this.newExpiry,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = Theme.of(context).textTheme;
+    final date = DateFormat('dd MMM yyyy');
+    final expired =
+        currentExpiry != null && currentExpiry!.isBefore(DateTime.now());
+
+    return AppCard(
+      tone: SurfaceTone.ink,
+      texture: CardTexture.rings,
+      showShadow: false,
+      radius: AppTheme.radiusLg,
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Text(
+                'Expires',
+                style: t.bodyMedium?.copyWith(
+                  color: AppColors.textOnInk.withValues(alpha: 0.7),
+                ),
+              ),
+              const Spacer(),
+              if (expired)
+                const AppPill(
+                  label: 'EXPIRED',
+                  color: AppColors.textOnAccent,
+                  background: AppColors.danger,
+                ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(
+                currentExpiry == null
+                    ? 'No expiry'
+                    : date.format(currentExpiry!),
+                style: t.titleLarge?.copyWith(
+                  color: newExpiry == null
+                      ? AppColors.textOnInk
+                      // Struck through once an extension is pending, so the
+                      // agent can see what they are replacing.
+                      : AppColors.textOnInk.withValues(alpha: 0.45),
+                  decoration: newExpiry == null
+                      ? null
+                      : TextDecoration.lineThrough,
+                  decorationColor: AppColors.textOnInk.withValues(alpha: 0.45),
+                ),
+              ),
+              if (newExpiry != null) ...[
+                const SizedBox(width: 10),
+                const Icon(
+                  Icons.arrow_forward_rounded,
+                  size: 16,
+                  color: AppColors.textOnInk,
+                ),
+                const SizedBox(width: 10),
+                Text(
+                  date.format(newExpiry!),
+                  style: t.titleLarge?.copyWith(color: AppColors.textOnInk),
+                ),
+              ],
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _StatusToggle extends StatelessWidget {
+  final String status;
+  final ValueChanged<String> onChanged;
+
+  const _StatusToggle({required this.status, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Expanded(
+          child: _StatusOption(
+            label: 'Active',
+            icon: Iconsax.tick_circle,
+            color: AppColors.success,
+            selected: status == 'active',
+            onTap: () => onChanged('active'),
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: _StatusOption(
+            label: 'Paused',
+            icon: Iconsax.pause_circle,
+            color: AppColors.neutral,
+            selected: status != 'active',
+            onTap: () => onChanged('inactive'),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _StatusOption extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final Color color;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _StatusOption({
+    required this.label,
+    required this.icon,
+    required this.color,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    // Solid when chosen, matching the plan tiles. A wash reads as "slightly
+    // tinted" next to a white sibling, which is a weak signal for a switch
+    // that decides whether the account works at all.
+    return Material(
+      color: selected ? color : AppColors.surface,
+      borderRadius: BorderRadius.circular(AppTheme.radiusMd),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(AppTheme.radiusMd),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(AppTheme.radiusMd),
+            border: Border.all(color: selected ? color : AppColors.border),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                icon,
+                size: 17,
+                color: selected
+                    ? AppColors.textOnAccent
+                    : AppColors.textTertiary,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                label,
+                style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                  color: selected
+                      ? AppColors.textOnAccent
+                      : AppColors.textSecondary,
+                ),
+              ),
+            ],
           ),
         ),
       ),
     );
+  }
+}
+
+class _PlanPalette {
+  final Color color;
+  final Color wash;
+
+  const _PlanPalette(this.color, this.wash);
+
+  static _PlanPalette of(String name) {
+    final n = name.toLowerCase();
+    if (n.contains('business')) {
+      return const _PlanPalette(AppColors.orange, AppColors.orangeWash);
+    }
+    if (n.contains('private')) {
+      return const _PlanPalette(AppColors.violet, AppColors.violetWash);
+    }
+    return const _PlanPalette(AppColors.accentInk, AppColors.accentWash);
+  }
+}
+
+class _PlanRow extends StatelessWidget {
+  final List<Plan> plans;
+  final Plan? selected;
+  final ValueChanged<Plan> onChanged;
+
+  const _PlanRow({
+    required this.plans,
+    required this.selected,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    if (plans.isEmpty) {
+      return Text(
+        'No plans available',
+        style: Theme.of(context).textTheme.bodyMedium,
+      );
+    }
+
+    return IntrinsicHeight(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          for (var i = 0; i < plans.length; i++) ...[
+            if (i > 0) const SizedBox(width: 10),
+            Expanded(
+              child: _PlanTile(
+                plan: plans[i],
+                selected: plans[i].id == selected?.id,
+                onTap: () => onChanged(plans[i]),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _PlanTile extends StatelessWidget {
+  final Plan plan;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _PlanTile({
+    required this.plan,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = Theme.of(context).textTheme;
+    final palette = _PlanPalette.of(plan.planName);
+
+    return Material(
+      color: selected ? palette.color : AppColors.surface,
+      borderRadius: BorderRadius.circular(AppTheme.radiusMd),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(AppTheme.radiusMd),
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(10, 10, 10, 12),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(AppTheme.radiusMd),
+            border: Border.all(
+              color: selected ? palette.color : AppColors.border,
+            ),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 20,
+                height: 20,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: selected ? AppColors.surface : Colors.transparent,
+                  border: selected
+                      ? null
+                      : Border.all(color: AppColors.borderStrong, width: 1.5),
+                ),
+                child: selected
+                    ? Icon(Icons.check_rounded, size: 14, color: palette.color)
+                    : null,
+              ),
+              const SizedBox(height: 10),
+              Text(
+                plan.planName,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: t.bodyLarge?.copyWith(
+                  fontSize: 12.5,
+                  height: 1.25,
+                  fontWeight: FontWeight.w700,
+                  color: selected
+                      ? AppColors.textOnAccent
+                      : AppColors.textPrimary,
+                ),
+              ),
+              const Spacer(),
+              const SizedBox(height: 6),
+              Text(
+                '${NumberFormat('#,##0').format(plan.price)}/mo',
+                maxLines: 1,
+                style: t.bodySmall?.copyWith(
+                  fontSize: 11,
+                  color: selected
+                      ? AppColors.textOnAccent.withValues(alpha: 0.85)
+                      : AppColors.textTertiary,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _Stepper extends StatefulWidget {
+  final String label;
+  final int value;
+  final int max;
+  final ValueChanged<int> onChanged;
+
+  const _Stepper({
+    required this.label,
+    required this.value,
+    required this.max,
+    required this.onChanged,
+  });
+
+  @override
+  State<_Stepper> createState() => _StepperState();
+}
+
+class _StepperState extends State<_Stepper> {
+  late final TextEditingController _controller = TextEditingController(
+    text: '${widget.value}',
+  );
+  final _focus = FocusNode();
+
+  @override
+  void initState() {
+    super.initState();
+    _focus.addListener(() {
+      if (_focus.hasFocus) {
+        _controller.selection = TextSelection(
+          baseOffset: 0,
+          extentOffset: _controller.text.length,
+        );
+      } else {
+        _commit(_controller.text, settle: true);
+      }
+    });
+  }
+
+  @override
+  void didUpdateWidget(_Stepper old) {
+    super.didUpdateWidget(old);
+    if (widget.value != old.value && !_focus.hasFocus) {
+      _controller.text = '${widget.value}';
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    _focus.dispose();
+    super.dispose();
+  }
+
+  void _commit(String raw, {bool settle = false}) {
+    final parsed = int.tryParse(raw.trim());
+    if (parsed == null) {
+      if (settle) _controller.text = '${widget.value}';
+      return;
+    }
+    final clamped = parsed.clamp(0, widget.max);
+    if (settle || clamped.toString() != raw.trim()) {
+      _controller.text = '$clamped';
+    }
+    if (clamped != widget.value) widget.onChanged(clamped);
+  }
+
+  void _step(int delta) {
+    final next = (widget.value + delta).clamp(0, widget.max);
+    if (next == widget.value) return;
+    HapticFeedback.selectionClick();
+    _controller.text = '$next';
+    widget.onChanged(next);
   }
 
   @override
   Widget build(BuildContext context) {
-    int months = int.tryParse(_monthsController.text) ?? 0;
-    int days = int.tryParse(_daysController.text) ?? 0;
-    int basePlanPrice = _selectedPlan?.price ?? 0;
-    int chargePrice = _hasBusinessPlan
-        ? (widget.user.businessPlanPrice ?? basePlanPrice)
-        : basePlanPrice;
-    double dailyRate = chargePrice / 30;
-    int totalDays = (months * 30) + days;
-    int totalCost = (dailyRate * totalDays).ceil();
-    bool isBusinessPricing =
-        _hasBusinessPlan && widget.user.businessPlanPrice != null;
+    final t = Theme.of(context).textTheme;
 
-    final bool isKeyboardOpen = MediaQuery.of(context).viewInsets.bottom > 0;
-
-    return GestureDetector(
-      onTap: () => FocusScope.of(context).unfocus(),
-      child: Scaffold(
-        backgroundColor: AppColors.darkBackground,
-        extendBodyBehindAppBar: true,
-        resizeToAvoidBottomInset: true,
-        appBar: AppBar(
-          backgroundColor: Colors.transparent,
-          elevation: 0,
-          centerTitle: true,
-          leading: IconButton(
-            icon: Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.05),
-                shape: BoxShape.circle,
-              ),
-              child: const Icon(
-                Iconsax.arrow_left_2,
-                color: Colors.white,
-                size: 20,
-              ),
-            ),
-            onPressed: () => Navigator.pop(context),
-          ),
-          title: Text(
-            "Edit User",
-            style: GoogleFonts.exo2(
-              color: Colors.white,
-              fontWeight: FontWeight.bold,
-              fontSize: 20,
-            ),
-          ),
-        ),
-        body: Stack(
-          children: [
-            Positioned.fill(
-              child: Container(
-                decoration: const BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    colors: [Color(0xFF0F0F10), Color(0xFF18181C)],
+    return AppCard(
+      radius: AppTheme.radiusMd,
+      showShadow: false,
+      padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(widget.label, style: t.bodySmall),
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _controller,
+                  focusNode: _focus,
+                  keyboardType: TextInputType.number,
+                  textInputAction: TextInputAction.done,
+                  inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                  onChanged: _commit,
+                  onSubmitted: (v) => _commit(v, settle: true),
+                  style: t.headlineMedium?.copyWith(fontSize: 22),
+                  decoration: const InputDecoration(
+                    isDense: true,
+                    filled: false,
+                    contentPadding: EdgeInsets.zero,
+                    border: InputBorder.none,
+                    enabledBorder: InputBorder.none,
+                    focusedBorder: InputBorder.none,
                   ),
                 ),
               ),
-            ),
-            SafeArea(
-              child: _isFetching
-                  ? const Center(
-                      child: CircularProgressIndicator(
-                        color: AppColors.accentGreen,
-                      ),
-                    )
-                  : FadeTransition(
-                      opacity: _fadeAnim,
-                      child: SlideTransition(
-                        position: _slideAnim,
-                        child: Column(
-                          children: [
-                            Expanded(
-                              child: SingleChildScrollView(
-                                padding: EdgeInsets.fromLTRB(
-                                  24,
-                                  10,
-                                  24,
-                                  isKeyboardOpen ? 250 : 120,
-                                ),
-                                physics: const BouncingScrollPhysics(),
-                                child: Column(
-                                  children: [
-                                    _buildUserGlassCard(),
-                                    const SizedBox(height: 32),
-                                    _buildEditForm(),
-                                    const SizedBox(height: 32),
-                                    _buildBusinessPlanSection(),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-            ),
-            if (!_isFetching && !isKeyboardOpen)
-              Positioned(
-                left: 24,
-                right: 24,
-                bottom: 30,
-                child: LiquidGlassContainer(
-                  borderRadius: BorderRadius.circular(24),
-                  opacity: 0.15,
-                  blurSigma: 25,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 20,
-                    vertical: 16,
-                  ),
-                  withBorder: true,
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(
-                            isBusinessPricing
-                                ? "BUSINESS RENEWAL"
-                                : "RENEWAL COST",
-                            style: GoogleFonts.exo2(
-                              color: isBusinessPricing
-                                  ? const Color(0xFFF97316).withOpacity(0.8)
-                                  : Colors.white.withOpacity(0.5),
-                              fontSize: 10,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          Row(
-                            children: [
-                              Text(
-                                "${NumberFormat('#,##0').format(totalCost)}",
-                                style: GoogleFonts.spaceMono(
-                                  color: Colors.white,
-                                  fontSize: 20,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                              if (isBusinessPricing) ...[
-                                const SizedBox(width: 6),
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 5,
-                                    vertical: 2,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: const Color(
-                                      0xFFF97316,
-                                    ).withOpacity(0.15),
-                                    borderRadius: BorderRadius.circular(4),
-                                  ),
-                                  child: Text(
-                                    "${NumberFormat('#,##0').format(chargePrice)}/mo",
-                                    style: GoogleFonts.spaceMono(
-                                      color: const Color(0xFFF97316),
-                                      fontSize: 9,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ],
-                          ),
-                        ],
-                      ),
-                      ScaleButton(
-                        onTap: _isLoading ? null : _updateUser,
-                        child: LiquidGlassContainer(
-                          borderRadius: BorderRadius.circular(16),
-                          opacity: 0.2,
-                          tintColor: AppColors.accentGreen,
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 24,
-                            vertical: 12,
-                          ),
-                          child: _isLoading
-                              ? const SizedBox(
-                                  width: 20,
-                                  height: 20,
-                                  child: CircularProgressIndicator(
-                                    color: Colors.white,
-                                    strokeWidth: 2,
-                                  ),
-                                )
-                              : Row(
-                                  children: [
-                                    const Icon(
-                                      Iconsax.refresh,
-                                      color: Colors.white,
-                                      size: 20,
-                                    ),
-                                    const SizedBox(width: 8),
-                                    Text(
-                                      "Update",
-                                      style: GoogleFonts.exo2(
-                                        color: Colors.white,
-                                        fontWeight: FontWeight.bold,
-                                        fontSize: 16,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
+              _StepButton(
+                icon: Icons.remove_rounded,
+                enabled: widget.value > 0,
+                onTap: () => _step(-1),
               ),
-          ],
+              const SizedBox(width: 6),
+              _StepButton(
+                icon: Icons.add_rounded,
+                enabled: widget.value < widget.max,
+                onTap: () => _step(1),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _StepButton extends StatelessWidget {
+  final IconData icon;
+  final bool enabled;
+  final VoidCallback onTap;
+
+  const _StepButton({
+    required this.icon,
+    required this.enabled,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: enabled ? AppColors.surfaceAlt : AppColors.background,
+      borderRadius: BorderRadius.circular(8),
+      child: InkWell(
+        onTap: enabled ? onTap : null,
+        borderRadius: BorderRadius.circular(8),
+        child: SizedBox(
+          width: 32,
+          height: 32,
+          child: Icon(
+            icon,
+            size: 18,
+            color: enabled ? AppColors.textPrimary : AppColors.textTertiary,
+          ),
         ),
       ),
     );
   }
+}
 
-  Widget _buildUserGlassCard() {
-    String expiryText = "No Expiry";
-    Color expiryColor = AppColors.accentGreen;
-    if (widget.user.expiryDate != null) {
-      try {
-        final exp = DateTime.parse(widget.user.expiryDate!);
-        final now = DateTime.now();
-        final days = exp.difference(now).inDays;
-        expiryText = DateFormat('dd MMM yyyy').format(exp);
-        if (days < 0) {
-          expiryColor = Colors.redAccent;
-        } else if (days <= 7) {
-          expiryColor = Colors.orangeAccent;
-          expiryText = "$expiryText (${days}d left)";
-        }
-      } catch (_) {}
-    }
+/// Business plan: shows what is attached, or lets one be attached.
+///
+/// Both actions apply immediately and stay on the screen. They are separate
+/// endpoints from the main save, so folding them into the Save button would
+/// imply a single atomic update that does not exist.
+class _BusinessCard extends StatelessWidget {
+  final bool active;
+  final String? activeName;
+  final List<BusinessPlan> plans;
+  final BusinessPlan? selected;
+  final bool busy;
+  final ValueChanged<BusinessPlan> onChanged;
+  final VoidCallback onAssign;
+  final VoidCallback onRemove;
 
-    return LiquidGlassContainer(
-      opacity: 0.1,
-      tintColor: _hasBusinessPlan ? const Color(0xFFF97316) : Colors.blueAccent,
-      borderRadius: BorderRadius.circular(24),
-      padding: const EdgeInsets.all(20),
-      withBorder: true,
+  const _BusinessCard({
+    required this.active,
+    required this.activeName,
+    required this.plans,
+    required this.selected,
+    required this.busy,
+    required this.onChanged,
+    required this.onAssign,
+    required this.onRemove,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = Theme.of(context).textTheme;
+
+    return AppCard(
+      radius: AppTheme.radiusMd,
+      padding: const EdgeInsets.all(14),
+      tone: active ? SurfaceTone.wash : SurfaceTone.plain,
+      washColor: AppColors.orangeWash,
+      showShadow: false,
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              Stack(
-                children: [
-                  Container(
-                    width: 50,
-                    height: 50,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      gradient: LinearGradient(
-                        colors: _hasBusinessPlan
-                            ? [
-                                const Color(0xFFF97316).withOpacity(0.3),
-                                const Color(0xFFEA580C).withOpacity(0.15),
-                              ]
-                            : [
-                                AppColors.accentGreen.withOpacity(0.2),
-                                Colors.blueAccent.withOpacity(0.2),
-                              ],
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                      ),
-                      border: Border.all(
-                        color: _hasBusinessPlan
-                            ? const Color(0xFFF97316).withOpacity(0.5)
-                            : Colors.white.withOpacity(0.2),
-                        width: _hasBusinessPlan ? 2.0 : 1.5,
-                      ),
-                    ),
-                    child: Center(
-                      child: Text(
-                        widget.user.username.isNotEmpty
-                            ? widget.user.username[0].toUpperCase()
-                            : "U",
-                        style: GoogleFonts.exo2(
-                          color: _hasBusinessPlan
-                              ? const Color(0xFFF97316)
-                              : Colors.white,
-                          fontSize: 22,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                  ),
-                  if (_hasBusinessPlan)
-                    Positioned(
-                      right: -2,
-                      bottom: -2,
-                      child: Container(
-                        width: 22,
-                        height: 22,
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFF97316),
-                          shape: BoxShape.circle,
-                          border: Border.all(
-                            color: const Color(0xFF0F0F10),
-                            width: 2,
-                          ),
-                        ),
-                        child: const Icon(
-                          Iconsax.briefcase,
-                          size: 11,
-                          color: Colors.white,
-                        ),
-                      ),
-                    ),
-                  if (widget.user.isOnline)
-                    Positioned(
-                      left: -2,
-                      top: -2,
-                      child: Container(
-                        width: 14,
-                        height: 14,
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF22D3EE),
-                          shape: BoxShape.circle,
-                          border: Border.all(
-                            color: const Color(0xFF0F0F10),
-                            width: 2,
-                          ),
-                          boxShadow: [
-                            BoxShadow(
-                              color: const Color(0xFF22D3EE).withOpacity(0.5),
-                              blurRadius: 6,
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                ],
+              AppIconBadge(
+                icon: Iconsax.briefcase,
+                color: AppColors.orange,
+                background: active ? AppColors.surface : AppColors.orangeWash,
+                size: 16,
+                padding: 8,
               ),
-              const SizedBox(width: 16),
+              const SizedBox(width: 10),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Row(
-                      children: [
-                        Flexible(
-                          child: Text(
-                            widget.user.username,
-                            style: GoogleFonts.exo2(
-                              color: Colors.white,
-                              fontSize: 20,
-                              fontWeight: FontWeight.bold,
-                            ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                        if (widget.user.isOnline) ...[
-                          const SizedBox(width: 8),
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 6,
-                              vertical: 2,
-                            ),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFF22D3EE).withOpacity(0.1),
-                              borderRadius: BorderRadius.circular(5),
-                            ),
-                            child: Text(
-                              "ONLINE",
-                              style: GoogleFonts.spaceMono(
-                                color: const Color(0xFF22D3EE),
-                                fontSize: 8,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ],
+                    Text(
+                      'Business plan',
+                      style: t.bodyLarge?.copyWith(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 14,
+                      ),
                     ),
-                    const SizedBox(height: 6),
-                    Row(
-                      children: [
-                        LiquidGlassContainer(
-                          borderRadius: BorderRadius.circular(8),
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 4,
-                          ),
-                          opacity: 0.15,
-                          tintColor: _status == 'active'
-                              ? AppColors.accentGreen
-                              : Colors.redAccent,
-                          child: Text(
-                            _status.toUpperCase(),
-                            style: GoogleFonts.ibmPlexSans(
-                              color: _status == 'active'
-                                  ? AppColors.accentGreen
-                                  : Colors.redAccent,
-                              fontSize: 10,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ),
-                        if (_hasBusinessPlan &&
-                            _currentBusinessPlanName != null) ...[
-                          const SizedBox(width: 6),
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 6,
-                              vertical: 3,
-                            ),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFFF97316).withOpacity(0.12),
-                              borderRadius: BorderRadius.circular(6),
-                              border: Border.all(
-                                color: const Color(
-                                  0xFFF97316,
-                                ).withOpacity(0.25),
-                                width: 0.5,
-                              ),
-                            ),
-                            child: Text(
-                              _currentBusinessPlanName!,
-                              style: GoogleFonts.ibmPlexSans(
-                                color: const Color(0xFFF97316),
-                                fontSize: 9,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ),
-                        ],
-                        if (widget.user.extraDeviceSlots > 0) ...[
-                          const SizedBox(width: 6),
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 5,
-                              vertical: 3,
-                            ),
-                            decoration: BoxDecoration(
-                              color: Colors.blueAccent.withOpacity(0.1),
-                              borderRadius: BorderRadius.circular(5),
-                            ),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                const Icon(
-                                  Iconsax.mobile,
-                                  size: 9,
-                                  color: Colors.blueAccent,
-                                ),
-                                const SizedBox(width: 3),
-                                Text(
-                                  "+${widget.user.extraDeviceSlots}",
-                                  style: GoogleFonts.spaceMono(
-                                    color: Colors.blueAccent,
-                                    fontSize: 9,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ],
+                    Text(
+                      active ? (activeName ?? 'Active') : 'Not assigned',
+                      style: t.bodySmall,
                     ),
                   ],
                 ),
               ),
+              if (busy)
+                const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
             ],
           ),
-          const SizedBox(height: 14),
-          Divider(color: Colors.white.withOpacity(0.06), height: 1),
           const SizedBox(height: 12),
-          Row(
-            children: [
-              Icon(
-                Iconsax.flash_1,
-                size: 12,
-                color: Colors.white.withOpacity(0.35),
+          if (active)
+            OutlinedButton.icon(
+              onPressed: busy ? null : onRemove,
+              icon: const Icon(Iconsax.trash, size: 16),
+              label: const Text('Remove business plan'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: AppColors.orange,
+                side: const BorderSide(color: AppColors.orange),
               ),
-              const SizedBox(width: 6),
-              Text(
-                widget.user.planName ?? "No Plan",
-                style: GoogleFonts.ibmPlexSans(
-                  color: Colors.white.withOpacity(0.5),
-                  fontSize: 11,
+            )
+          else ...[
+            for (final plan in plans)
+              InkWell(
+                onTap: busy ? null : () => onChanged(plan),
+                borderRadius: BorderRadius.circular(AppTheme.radiusSm),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  child: Row(
+                    children: [
+                      Icon(
+                        plan.id == selected?.id
+                            ? Icons.radio_button_checked_rounded
+                            : Icons.radio_button_unchecked_rounded,
+                        size: 19,
+                        color: plan.id == selected?.id
+                            ? AppColors.orange
+                            : AppColors.borderStrong,
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          plan.planName,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: t.bodyLarge?.copyWith(fontSize: 14),
+                        ),
+                      ),
+                      Text(
+                        '${NumberFormat('#,##0').format(plan.price)}/mo',
+                        style: t.bodySmall?.copyWith(
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
-              const Spacer(),
-              Icon(
-                Iconsax.calendar_1,
-                size: 12,
-                color: expiryColor.withOpacity(0.6),
-              ),
-              const SizedBox(width: 6),
-              Text(
-                expiryText,
-                style: GoogleFonts.ibmPlexSans(
-                  color: expiryColor.withOpacity(0.7),
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ],
-          ),
+            const SizedBox(height: 8),
+            FilledButton(
+              onPressed: busy || selected == null ? null : onAssign,
+              style: FilledButton.styleFrom(backgroundColor: AppColors.orange),
+              child: const Text('Assign business plan'),
+            ),
+          ],
         ],
       ),
     );
   }
+}
 
-  Widget _buildEditForm() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _buildDropdown<Plan>(
-          label: "CHANGE PLAN",
-          value: _selectedPlan,
-          items: _plans,
-          onChanged: (p) => setState(() => _selectedPlan = p),
-          displayText: (p) => p.planName,
-          icon: Iconsax.box,
-        ),
-        const SizedBox(height: 24),
-        Align(
-          alignment: Alignment.centerLeft,
-          child: Row(
-            children: [
-              Container(
-                width: 3,
-                height: 16,
-                decoration: BoxDecoration(
-                  color: AppColors.accentGreen,
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-              const SizedBox(width: 10),
-              Text(
-                "EXTEND DURATION",
-                style: GoogleFonts.exo2(
-                  color: Colors.white.withOpacity(0.5),
-                  fontSize: 11,
-                  fontWeight: FontWeight.bold,
-                  letterSpacing: 1.2,
-                ),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 12),
-        Row(
+class _SaveBar extends StatelessWidget {
+  final int cost;
+  final int addedDays;
+  final bool enabled;
+  final bool busy;
+  final VoidCallback onSave;
+
+  const _SaveBar({
+    required this.cost,
+    required this.addedDays,
+    required this.enabled,
+    required this.busy,
+    required this.onSave,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = Theme.of(context).textTheme;
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+      decoration: const BoxDecoration(
+        color: AppColors.surface,
+        border: Border(top: BorderSide(color: AppColors.border)),
+      ),
+      child: SafeArea(
+        top: false,
+        child: Row(
           children: [
-            Expanded(
-              child: _buildCounterInput(
-                controller: _monthsController,
-                label: "Months",
-              ),
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: _buildCounterInput(
-                controller: _daysController,
-                label: "Days",
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 24),
-        _buildPasswordInput(),
-        const SizedBox(height: 24),
-        _buildDropdown<String>(
-          label: "ACCOUNT STATUS",
-          value: _status,
-          items: ['active', 'inactive'],
-          onChanged: (s) => setState(() => _status = s!),
-          displayText: (s) => s.toUpperCase(),
-          icon: _status == 'active' ? Iconsax.tick_circle : Iconsax.forbidden_2,
-          iconColor: _status == 'active'
-              ? AppColors.accentGreen
-              : Colors.redAccent,
-        ),
-      ],
-    );
-  }
-
-  Widget _buildBusinessPlanSection() {
-    const orangeAccent = Color(0xFFF97316);
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Container(
-              width: 3,
-              height: 16,
-              decoration: BoxDecoration(
-                color: orangeAccent,
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-            const SizedBox(width: 10),
-            Text(
-              "BUSINESS PLAN",
-              style: GoogleFonts.exo2(
-                color: Colors.white.withOpacity(0.5),
-                fontSize: 11,
-                fontWeight: FontWeight.bold,
-                letterSpacing: 1.2,
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 12),
-        LiquidGlassContainer(
-          borderRadius: BorderRadius.circular(20),
-          opacity: _hasBusinessPlan ? 0.08 : 0.05,
-          tintColor: _hasBusinessPlan ? orangeAccent : null,
-          padding: const EdgeInsets.all(20),
-          child: _hasBusinessPlan
-              ? _buildActiveBusinessPlan(orangeAccent)
-              : _buildAssignBusinessPlan(orangeAccent),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildActiveBusinessPlan(Color orangeAccent) {
-    return Column(
-      children: [
-        Row(
-          children: [
-            Container(
-              width: 44,
-              height: 44,
-              decoration: BoxDecoration(
-                color: orangeAccent.withOpacity(0.15),
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: orangeAccent.withOpacity(0.3)),
-              ),
-              child: Icon(Iconsax.briefcase, color: orangeAccent, size: 22),
-            ),
-            const SizedBox(width: 14),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(
-                    _currentBusinessPlanName ?? "Business Plan",
-                    style: GoogleFonts.exo2(
-                      color: Colors.white,
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                    ),
+                    addedDays > 0 ? 'Cost' : 'No extension',
+                    style: t.bodySmall,
                   ),
-                  const SizedBox(height: 4),
-                  Row(
-                    children: [
-                      Icon(Iconsax.tick_circle, size: 12, color: orangeAccent),
-                      const SizedBox(width: 6),
-                      Text(
-                        "Active — Business servers unlocked",
-                        style: GoogleFonts.ibmPlexSans(
-                          color: orangeAccent.withOpacity(0.8),
-                          fontSize: 11,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                    ],
+                  Text(
+                    addedDays > 0 ? NumberFormat('#,##0').format(cost) : '—',
+                    style: t.headlineMedium?.copyWith(fontSize: 22),
                   ),
                 ],
               ),
             ),
-          ],
-        ),
-        const SizedBox(height: 16),
-        Divider(color: Colors.white.withOpacity(0.06), height: 1),
-        const SizedBox(height: 16),
-        ScaleButton(
-          onTap: _businessLoading ? null : _showRemoveBusinessConfirm,
-          child: Container(
-            width: double.infinity,
-            height: 48,
-            decoration: BoxDecoration(
-              color: Colors.redAccent.withOpacity(0.08),
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: Colors.redAccent.withOpacity(0.2)),
-            ),
-            child: _businessLoading
-                ? const Center(
-                    child: SizedBox(
+            const SizedBox(width: 12),
+            FilledButton(
+              onPressed: enabled && !busy ? onSave : null,
+              child: busy
+                  ? const SizedBox(
                       width: 18,
                       height: 18,
                       child: CircularProgressIndicator(
-                        color: Colors.redAccent,
                         strokeWidth: 2,
-                      ),
-                    ),
-                  )
-                : Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      const Icon(
-                        Iconsax.close_circle,
-                        color: Colors.redAccent,
-                        size: 18,
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        "Remove Business Plan",
-                        style: GoogleFonts.ibmPlexSans(
-                          color: Colors.redAccent,
-                          fontSize: 14,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ],
-                  ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildAssignBusinessPlan(Color orangeAccent) {
-    return Column(
-      children: [
-        Row(
-          children: [
-            Container(
-              width: 44,
-              height: 44,
-              decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.05),
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: Colors.white.withOpacity(0.08)),
-              ),
-              child: Icon(
-                Iconsax.briefcase,
-                color: Colors.white.withOpacity(0.3),
-                size: 22,
-              ),
-            ),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    "No Business Plan",
-                    style: GoogleFonts.exo2(
-                      color: Colors.white.withOpacity(0.6),
-                      fontSize: 15,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    "Assign to unlock Business servers",
-                    style: GoogleFonts.ibmPlexSans(
-                      color: Colors.white.withOpacity(0.3),
-                      fontSize: 11,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-        if (_businessPlans.isNotEmpty) ...[
-          const SizedBox(height: 16),
-          Divider(color: Colors.white.withOpacity(0.06), height: 1),
-          const SizedBox(height: 16),
-          LiquidGlassContainer(
-            borderRadius: BorderRadius.circular(14),
-            opacity: 0.05,
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-            child: DropdownButtonHideUnderline(
-              child: DropdownButton<BusinessPlan>(
-                value: _selectedBusinessPlan,
-                dropdownColor: const Color(0xFF2C2C2E),
-                icon: const Icon(
-                  Iconsax.arrow_down_1,
-                  color: Colors.white54,
-                  size: 20,
-                ),
-                isExpanded: true,
-                style: GoogleFonts.ibmPlexSans(
-                  color: Colors.white,
-                  fontSize: 15,
-                ),
-                items: _businessPlans
-                    .map(
-                      (bp) => DropdownMenuItem(
-                        value: bp,
-                        child: Row(
-                          children: [
-                            Icon(
-                              Iconsax.briefcase,
-                              size: 18,
-                              color: orangeAccent,
-                            ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: Text(
-                                bp.planName,
-                                style: GoogleFonts.ibmPlexSans(
-                                  color: Colors.white,
-                                  fontSize: 14,
-                                ),
-                              ),
-                            ),
-                            Text(
-                              "${NumberFormat('#,##0').format(bp.price)} cr",
-                              style: GoogleFonts.spaceMono(
-                                color: Colors.white.withOpacity(0.4),
-                                fontSize: 11,
-                              ),
-                            ),
-                          ],
-                        ),
+                        color: AppColors.textOnAccent,
                       ),
                     )
-                    .toList(),
-                onChanged: (bp) => setState(() => _selectedBusinessPlan = bp),
-              ),
-            ),
-          ),
-          const SizedBox(height: 16),
-          ScaleButton(
-            onTap: _businessLoading ? null : _assignBusinessPlan,
-            child: Container(
-              width: double.infinity,
-              height: 48,
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [
-                    orangeAccent.withOpacity(0.2),
-                    orangeAccent.withOpacity(0.1),
-                  ],
-                ),
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: orangeAccent.withOpacity(0.4)),
-              ),
-              child: _businessLoading
-                  ? Center(
-                      child: SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(
-                          color: orangeAccent,
-                          strokeWidth: 2,
-                        ),
-                      ),
-                    )
-                  : Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Iconsax.briefcase, color: orangeAccent, size: 18),
-                        const SizedBox(width: 8),
-                        Text(
-                          "Assign Business Plan",
-                          style: GoogleFonts.ibmPlexSans(
-                            color: orangeAccent,
-                            fontSize: 14,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ],
-                    ),
-            ),
-          ),
-        ],
-        if (_businessPlans.isEmpty) ...[
-          const SizedBox(height: 16),
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.03),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Row(
-              children: [
-                Icon(
-                  Iconsax.info_circle,
-                  size: 16,
-                  color: Colors.white.withOpacity(0.3),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    "No business plans available",
-                    style: GoogleFonts.ibmPlexSans(
-                      color: Colors.white.withOpacity(0.3),
-                      fontSize: 12,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ],
-    );
-  }
-
-  Widget _buildPasswordInput() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Container(
-              width: 3,
-              height: 16,
-              decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.2),
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-            const SizedBox(width: 10),
-            Text(
-              "CHANGE PASSWORD (OPTIONAL)",
-              style: GoogleFonts.exo2(
-                color: Colors.white.withOpacity(0.5),
-                fontSize: 11,
-                fontWeight: FontWeight.bold,
-                letterSpacing: 1.2,
-              ),
+                  : const Text('Save changes'),
             ),
           ],
         ),
-        const SizedBox(height: 8),
-        LiquidGlassContainer(
-          borderRadius: BorderRadius.circular(16),
-          opacity: 0.05,
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-          child: TextField(
-            controller: _passwordController,
-            obscureText: _obscurePassword,
-            style: GoogleFonts.ibmPlexSans(color: Colors.white, fontSize: 16),
-            decoration: InputDecoration(
-              border: InputBorder.none,
-              hintText: "Enter new password",
-              hintStyle: GoogleFonts.ibmPlexSans(
-                color: Colors.white.withOpacity(0.3),
-              ),
-              icon: const Icon(Iconsax.lock, color: Colors.white54, size: 20),
-              suffixIcon: IconButton(
-                icon: Icon(
-                  _obscurePassword ? Iconsax.eye_slash : Iconsax.eye,
-                  color: Colors.white54,
-                  size: 20,
-                ),
-                onPressed: () {
-                  setState(() {
-                    _obscurePassword = !_obscurePassword;
-                  });
-                },
-              ),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildCounterInput({
-    required TextEditingController controller,
-    required String label,
-  }) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        LiquidGlassContainer(
-          borderRadius: BorderRadius.circular(16),
-          opacity: 0.05,
-          child: Container(
-            height: 60,
-            padding: EdgeInsets.zero,
-            child: Row(
-              children: [
-                ScaleButton(
-                  onTap: () {
-                    int val = int.tryParse(controller.text) ?? 0;
-                    if (val > 0) {
-                      controller.text = '${val - 1}';
-                      HapticFeedback.selectionClick();
-                    }
-                  },
-                  child: Container(
-                    width: 44,
-                    height: 60,
-                    decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.03),
-                      borderRadius: const BorderRadius.only(
-                        topLeft: Radius.circular(16),
-                        bottomLeft: Radius.circular(16),
-                      ),
-                    ),
-                    child: Icon(
-                      Iconsax.minus,
-                      size: 16,
-                      color: Colors.white.withOpacity(0.4),
-                    ),
-                  ),
-                ),
-                Container(
-                  width: 1,
-                  height: 30,
-                  color: Colors.white.withOpacity(0.06),
-                ),
-                Expanded(
-                  child: TextFormField(
-                    controller: controller,
-                    textAlign: TextAlign.center,
-                    keyboardType: TextInputType.number,
-                    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                    style: GoogleFonts.spaceMono(
-                      color: Colors.white,
-                      fontSize: 22,
-                      fontWeight: FontWeight.bold,
-                    ),
-                    decoration: InputDecoration(
-                      border: InputBorder.none,
-                      hintText: "0",
-                      hintStyle: GoogleFonts.spaceMono(
-                        color: Colors.white.withOpacity(0.15),
-                      ),
-                      contentPadding: const EdgeInsets.only(bottom: 4),
-                    ),
-                    onChanged: (val) {
-                      setState(() {});
-                    },
-                  ),
-                ),
-                Container(
-                  width: 1,
-                  height: 30,
-                  color: Colors.white.withOpacity(0.06),
-                ),
-                ScaleButton(
-                  onTap: () {
-                    int val = int.tryParse(controller.text) ?? 0;
-                    controller.text = '${val + 1}';
-                    HapticFeedback.selectionClick();
-                  },
-                  child: Container(
-                    width: 44,
-                    height: 60,
-                    decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.03),
-                      borderRadius: const BorderRadius.only(
-                        topRight: Radius.circular(16),
-                        bottomRight: Radius.circular(16),
-                      ),
-                    ),
-                    child: Icon(
-                      Iconsax.add,
-                      size: 16,
-                      color: AppColors.accentGreen.withOpacity(0.6),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-        const SizedBox(height: 6),
-        Center(
-          child: Text(
-            label,
-            style: GoogleFonts.ibmPlexSans(
-              color: Colors.white.withOpacity(0.35),
-              fontSize: 11,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildDropdown<T>({
-    required String label,
-    required T? value,
-    required List<T> items,
-    required ValueChanged<T?> onChanged,
-    required String Function(T) displayText,
-    required IconData icon,
-    Color? iconColor,
-  }) {
-    final accent = iconColor ?? AppColors.accentGreen;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Container(
-              width: 3,
-              height: 16,
-              decoration: BoxDecoration(
-                color: accent,
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-            const SizedBox(width: 10),
-            Text(
-              label,
-              style: GoogleFonts.exo2(
-                color: Colors.white.withOpacity(0.5),
-                fontSize: 11,
-                fontWeight: FontWeight.bold,
-                letterSpacing: 1.2,
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 8),
-        LiquidGlassContainer(
-          borderRadius: BorderRadius.circular(16),
-          opacity: 0.05,
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-          child: DropdownButtonHideUnderline(
-            child: DropdownButton<T>(
-              value: value,
-              dropdownColor: const Color(0xFF2C2C2E),
-              icon: const Icon(
-                Iconsax.arrow_down_1,
-                color: Colors.white54,
-                size: 20,
-              ),
-              isExpanded: true,
-              style: GoogleFonts.ibmPlexSans(color: Colors.white, fontSize: 16),
-              items: items
-                  .map(
-                    (item) => DropdownMenuItem(
-                      value: item,
-                      child: Row(
-                        children: [
-                          Icon(
-                            icon,
-                            size: 20,
-                            color: iconColor ?? AppColors.accentGreen,
-                          ),
-                          const SizedBox(width: 12),
-                          Text(displayText(item)),
-                        ],
-                      ),
-                    ),
-                  )
-                  .toList(),
-              onChanged: onChanged,
-            ),
-          ),
-        ),
-      ],
+      ),
     );
   }
 }
