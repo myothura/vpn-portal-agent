@@ -1,0 +1,11 @@
+{
+    "@@locale": "en",
+    "secureLogin": "Secure Login",
+    "loginCredentials": "Please enter your agent credentials",
+    "username": "Username",
+    "password": "Password",
+    "login": "LOGIN",
+    "loggingIn": "LOGGING IN...",
+    "loginFailed": "Login Failed. Please check your credentials.",
+    "selectLanguage": "Select Language"
+}

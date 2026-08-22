@@ -1,0 +1,116 @@
+import 'package:dio/dio.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:vpn_agent_app/core/api/api_client.dart'; // Import ApiClient
+import 'package:vpn_agent_app/core/api/api_config.dart';
+import 'package:vpn_agent_app/core/services/notification_service.dart';
+
+class AuthService {
+  static const String _tokenKey = 'access_token';
+  static const String _permissionKey = 'can_send_noti';
+
+  // ⚠️ Login ဝင်တဲ့အချိန်မှာ ApiClient ကို သုံးလို့မရပါ (Circular Dependency ဖြစ်တတ်လို့ပါ)
+  // ဒါကြောင့် Login အတွက် သီးသန့် Dio (Clean Dio) ကို တည်ဆောက်ထားပါတယ်
+  final Dio _publicDio = Dio(
+    BaseOptions(
+      baseUrl: ApiConfig.baseUrl,
+      connectTimeout: const Duration(seconds: 15),
+      receiveTimeout: const Duration(seconds: 15),
+    ),
+  )..interceptors.add(LogInterceptor(responseBody: true, requestBody: true));
+
+  // ⭐️ Login ဝင်ပြီးနောက်ပိုင်းသုံးမည့် Authenticated Request များအတွက်
+  // ApiClient ထဲက dio ကို လှမ်းယူသုံးပါမယ် (Auto Token Insert & Auto Logout ပါပြီးသားဖြစ်မယ်)
+  Dio get _authDio => ApiClient().dio;
+
+  Future<bool> login(String email, String password) async {
+    try {
+      // Login လုပ်ချိန်မှာ Interceptor မပါတဲ့ _publicDio ကိုသုံးပါ
+      final response = await _publicDio.post(
+        ApiConfig.agentLogin,
+        data: {'email': email, 'password': password},
+      );
+
+      if (response.statusCode == 200 && response.data['token'] != null) {
+        final String token = response.data['token'];
+
+        // 🔥 FIX: 'agent' မဟုတ်ဘဲ 'user' key ကို သုံးရပါမယ်
+        final userData = response.data['user'];
+
+        // Permission Check (Safety Check ထည့်ထားပါသည်)
+        bool canSendNoti = false;
+        if (userData != null) {
+          canSendNoti = userData['can_send_notifications'] ?? false;
+        }
+
+        // Save to Local Storage
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString(_tokenKey, token);
+        await prefs.setBool(_permissionKey, canSendNoti);
+
+        print("✅ Token saved. Can Send Noti? $canSendNoti");
+
+        // Token ရပြီဖြစ်တဲ့အတွက် FCM Token ကို Server ပို့ပါမယ်
+        await _updateFcmToken();
+
+        return true;
+      }
+      return false;
+    } on DioException catch (e) {
+      print("Login Error: ${e.message}");
+      return false;
+    }
+  }
+
+  // FCM Token Update လုပ်ခြင်း
+  Future<void> _updateFcmToken() async {
+    try {
+      final fcmToken = await NotificationService.getFcmToken();
+      if (fcmToken != null) {
+        // ⭐️ ApiClient ရဲ့ _authDio ကိုသုံးတဲ့အတွက် Header ထည့်ပေးစရာ မလိုတော့ပါ
+        await _authDio.post(
+          ApiConfig.agentUpdateFcmToken,
+          data: {'fcm_token': fcmToken},
+        );
+        print("✅ FCM Token updated successfully via ApiClient");
+      }
+    } catch (e) {
+      print("Error updating FCM token: $e");
+      // FCM update မအောင်မြင်လည်း Login process ကို မရပ်တန့်စေပါ
+    }
+  }
+
+  Future<void> logout() async {
+    try {
+      // 1. Server ဘက်ကို Logout လုပ်ကြောင်း လှမ်းပြောမယ် (Optional)
+      // Token ရှိမှသာ ခေါ်ပါမယ်
+      if (await hasToken()) {
+        await _authDio.post(ApiConfig.agentLogout);
+        print("✅ Server Logout Successful");
+      }
+    } catch (e) {
+      // Server error တက်လည်း ဂရုမစိုက်ဘဲ Local ကကောင်ကို ဆက်ဖျက်မယ်
+      print("Server Logout Warning: $e");
+    } finally {
+      // 2. ဖုန်းထဲက Data တွေကို အပြီးရှင်းမယ်
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(_tokenKey);
+      await prefs.remove(_permissionKey);
+    }
+  }
+
+  Future<bool> hasToken() async {
+    final prefs = await SharedPreferences.getInstance();
+    final token = prefs.getString(_tokenKey);
+    return token != null && token.isNotEmpty;
+  }
+
+  Future<String?> getToken() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_tokenKey);
+  }
+
+  Future<bool> canSendNotification() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_permissionKey) ?? false;
+  }
+}

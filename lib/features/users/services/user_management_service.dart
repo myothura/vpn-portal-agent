@@ -1,0 +1,212 @@
+import 'package:dio/dio.dart';
+import 'package:vpn_agent_app/core/api/api_client.dart';
+import 'package:vpn_agent_app/core/api/api_config.dart';
+import 'package:vpn_agent_app/features/users/models/plan_model.dart';
+import 'package:vpn_agent_app/features/users/models/vpn_user_model.dart';
+
+class UserManagementService {
+  final Dio _dio = ApiClient().dio;
+
+  Future<VpnUserResponse?> getVpnUsers({
+    int page = 1,
+    String? search,
+    String? filter,
+  }) async {
+    try {
+      String url = '${ApiConfig.baseUrl}${ApiConfig.agentVpnUsers}?page=$page';
+      if (search != null && search.isNotEmpty) {
+        url += '&search=$search';
+      }
+      if (filter != null && filter.isNotEmpty && filter != 'all') {
+        url += '&filter=$filter';
+      }
+
+      final response = await _dio.get(url);
+      if (response.statusCode == 200) {
+        return VpnUserResponse.fromJson(response.data);
+      }
+      return null;
+    } on DioException catch (e) {
+      print('Failed to get VPN users: ${e.response?.data}');
+      return null;
+    }
+  }
+
+  Future<List<Plan>> getAvailablePlans() async {
+    try {
+      final response = await _dio.get(ApiConfig.baseUrl + ApiConfig.agentPlans);
+      if (response.statusCode == 200 && response.data is List) {
+        List<dynamic> planList = response.data;
+        return planList.map((json) => Plan.fromJson(json)).toList();
+      }
+      return [];
+    } on DioException catch (e) {
+      print('Failed to load plans: $e');
+      return [];
+    }
+  }
+
+  Future<List<BusinessPlan>> getBusinessPlans() async {
+    try {
+      final response = await _dio.get(
+        ApiConfig.baseUrl + ApiConfig.agentBusinessPlans,
+      );
+      if (response.statusCode == 200) {
+        final data = response.data;
+        List<dynamic> planList = [];
+        if (data is List) {
+          planList = data;
+        } else if (data is Map && data['data'] is List) {
+          planList = data['data'];
+        }
+        return planList.map((json) => BusinessPlan.fromJson(json)).toList();
+      }
+      return [];
+    } on DioException catch (e) {
+      print('Failed to load business plans: $e');
+      return [];
+    }
+  }
+
+  Future<bool> createUser({
+    required String username,
+    required String password,
+    required int planId,
+    int? months,
+    int? days,
+  }) async {
+    try {
+      final response = await _dio.post(
+        ApiConfig.baseUrl + ApiConfig.agentVpnUsers,
+        data: {
+          'username': username,
+          'password': password,
+          'plan_id': planId,
+          'months': months ?? 0,
+          'days': days ?? 0,
+        },
+      );
+      return response.statusCode == 201;
+    } on DioException catch (e) {
+      print('Failed to create user: ${e.response?.data}');
+      return false;
+    }
+  }
+
+  Future<bool> updateUser({
+    required int userId,
+    int? planId,
+    int? months,
+    int? days,
+    String? status,
+    String? password,
+  }) async {
+    try {
+      final Map<String, dynamic> data = {};
+      if (planId != null) data['plan_id'] = planId;
+      if (months != null) data['months'] = months;
+      if (days != null) data['days'] = days;
+      if (status != null) data['status'] = status;
+      if (password != null && password.isNotEmpty) data['password'] = password;
+
+      if (data.isEmpty) return true;
+
+      final response = await _dio.put(
+        '${ApiConfig.baseUrl}${ApiConfig.agentVpnUsers}/$userId',
+        data: data,
+      );
+      return response.statusCode == 200;
+    } on DioException catch (e) {
+      print('Failed to update user: ${e.response?.data}');
+      return false;
+    }
+  }
+
+  Future<Map<String, dynamic>> assignBusinessPlan(
+    int userId,
+    int planId,
+  ) async {
+    try {
+      final response = await _dio.post(
+        '${ApiConfig.baseUrl}${ApiConfig.agentAssignBusiness(userId)}',
+        data: {'business_plan_id': planId},
+      );
+      if (response.statusCode == 200) {
+        return {
+          'success': true,
+          'message': response.data['message'] ?? 'Business Plan assigned',
+        };
+      }
+      return {
+        'success': false,
+        'message': response.data['message'] ?? 'Assignment failed',
+      };
+    } on DioException catch (e) {
+      final msg = e.response?.data is Map
+          ? (e.response!.data['message'] ?? 'Network error')
+          : 'Network error';
+      return {'success': false, 'message': msg};
+    }
+  }
+
+  Future<Map<String, dynamic>> removeBusinessPlan(int userId) async {
+    try {
+      final response = await _dio.post(
+        '${ApiConfig.baseUrl}${ApiConfig.agentRemoveBusiness(userId)}',
+      );
+      if (response.statusCode == 200) {
+        return {
+          'success': true,
+          'message': response.data['message'] ?? 'Business Plan removed',
+        };
+      }
+      return {
+        'success': false,
+        'message': response.data['message'] ?? 'Removal failed',
+      };
+    } on DioException catch (e) {
+      final msg = e.response?.data is Map
+          ? (e.response!.data['message'] ?? 'Network error')
+          : 'Network error';
+      return {'success': false, 'message': msg};
+    }
+  }
+
+  Future<bool> addDeviceSlots(int userId, int slots) async {
+    try {
+      final response = await _dio.post(
+        '${ApiConfig.baseUrl}/agent/vpn-users/$userId/add-slots',
+        data: {'slots': slots},
+      );
+      return response.statusCode == 200;
+    } on DioException catch (e) {
+      print('Add Slots Error: ${e.response?.data}');
+      return false;
+    }
+  }
+
+  Future<bool> removeDeviceSlots(int userId, int slots) async {
+    try {
+      final response = await _dio.post(
+        '${ApiConfig.baseUrl}/agent/vpn-users/$userId/remove-slots',
+        data: {'slots': slots},
+      );
+      return response.statusCode == 200;
+    } on DioException catch (e) {
+      print('Remove Slots Error: ${e.response?.data}');
+      return false;
+    }
+  }
+
+  Future<bool> deleteUser(int userId) async {
+    try {
+      final response = await _dio.delete(
+        '${ApiConfig.baseUrl}${ApiConfig.agentVpnUsers}/$userId',
+      );
+      return response.statusCode == 200;
+    } on DioException catch (e) {
+      print('Failed to delete user: ${e.response?.data}');
+      return false;
+    }
+  }
+}

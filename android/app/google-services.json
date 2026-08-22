@@ -1,0 +1,67 @@
+{
+  "project_info": {
+    "project_number": "614436650519",
+    "project_id": "starlink-vpn-user-app",
+    "storage_bucket": "starlink-vpn-user-app.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:614436650519:android:6d341f960b974b2bebe652",
+        "android_client_info": {
+          "package_name": "com.starlink.vpn"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAmf6pdnMV-ytgPJqy4EQuqT6jQE5jtb-8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:614436650519:android:6f85bab940e58c43ebe652",
+        "android_client_info": {
+          "package_name": "com.vpnninja.me"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAmf6pdnMV-ytgPJqy4EQuqT6jQE5jtb-8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:614436650519:android:3d64464437c73facebe652",
+        "android_client_info": {
+          "package_name": "com.vpnportal.agent"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAmf6pdnMV-ytgPJqy4EQuqT6jQE5jtb-8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
