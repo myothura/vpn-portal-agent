@@ -8,6 +8,11 @@ class ProfileUser {
   final int activeUserCount;
   final bool canSendNoti;
   final bool canManageAgents;
+
+  /// ProfileController returns this alongside the other two permissions; the
+  /// model dropped it, so the profile could not say whether the agent has
+  /// support chat while listing the two flags either side of it.
+  final bool canAccessChat;
   final List<PaymentMethod> paymentMethods;
 
   ProfileUser({
@@ -18,6 +23,7 @@ class ProfileUser {
     required this.activeUserCount,
     required this.canSendNoti,
     required this.canManageAgents,
+    this.canAccessChat = false,
     required this.paymentMethods,
   });
 
@@ -30,6 +36,7 @@ class ProfileUser {
       activeUserCount: json['active_user_count'] ?? 0,
       canSendNoti: json['can_send_notifications'] ?? false,
       canManageAgents: json['can_manage_agents'] ?? false,
+      canAccessChat: json['can_access_chat'] ?? false,
       paymentMethods:
           (json['payment_details'] as List?)
               ?.map((e) => PaymentMethod.fromJson(e))
@@ -47,6 +54,7 @@ class ProfileUser {
       'active_user_count': activeUserCount,
       'can_send_notifications': canSendNoti,
       'can_manage_agents': canManageAgents,
+      'can_access_chat': canAccessChat,
       'payment_details': paymentMethods.map((e) => e.toJson()).toList(),
     };
   }
