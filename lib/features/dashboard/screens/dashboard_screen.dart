@@ -22,6 +22,7 @@ import 'package:vpn_agent_app/features/notifications/screens/send_notification_s
 import 'package:vpn_agent_app/features/profile/models/payment_method_model.dart';
 import 'package:vpn_agent_app/features/profile/screens/manage_payment_screen.dart';
 import 'package:vpn_agent_app/features/profile/screens/profile_screen.dart';
+import 'package:vpn_agent_app/features/profit_loss/screens/profit_loss_screen.dart';
 import 'package:vpn_agent_app/features/profile/services/profile_service.dart';
 import 'package:vpn_agent_app/features/users/screens/add_user_screen.dart';
 import 'package:vpn_agent_app/features/users/screens/device_slot_management_screen.dart';
@@ -52,6 +53,11 @@ class _DashboardViewState extends State<_DashboardView> {
 
   bool _canManageAgents = false;
   bool _canSendNoti = false;
+
+  /// Profit & loss is the whole business's figures, so it is the one tile
+  /// gated on being account 16 rather than on a permission flag — there is no
+  /// column that would grant it to anyone else.
+  bool _isSuperAdmin = false;
   bool _canAccessChat = false;
 
   /// Which action tile is mid-flight, so the spinner sits in the tile that was
@@ -81,6 +87,7 @@ class _DashboardViewState extends State<_DashboardView> {
         _canManageAgents = isSuperAdmin || _flag(profile['can_manage_agents']);
         _canSendNoti = isSuperAdmin || _flag(profile['can_send_notifications']);
         _canAccessChat = isSuperAdmin || _flag(profile['can_access_chat']);
+        _isSuperAdmin = isSuperAdmin;
       });
     } catch (_) {
       // Permissions stay false; the agent sees the core tiles and nothing is
@@ -243,6 +250,7 @@ class _DashboardViewState extends State<_DashboardView> {
                           canAccessChat: _canAccessChat,
                           canManageAgents: _canManageAgents,
                           canSendNoti: _canSendNoti,
+                          isSuperAdmin: _isSuperAdmin,
                           onOpen: _open,
                           onPayment: _openPaymentMethods,
                         ),
@@ -873,6 +881,7 @@ class _ActionsGrid extends StatelessWidget {
   final DashboardStats stats;
   final String? busyAction;
   final bool canAccessChat;
+  final bool isSuperAdmin;
   final bool canManageAgents;
   final bool canSendNoti;
   final Future<void> Function(Widget) onOpen;
@@ -882,6 +891,7 @@ class _ActionsGrid extends StatelessWidget {
     required this.stats,
     required this.busyAction,
     required this.canAccessChat,
+    required this.isSuperAdmin,
     required this.canManageAgents,
     required this.canSendNoti,
     required this.onOpen,
@@ -917,6 +927,14 @@ class _ActionsGrid extends StatelessWidget {
         busy: busyAction == 'payment',
         onTap: onPayment,
       ),
+      if (isSuperAdmin)
+        AppActionTile(
+          label: 'Profit & loss',
+          icon: Iconsax.chart_2,
+          color: AppColors.orange,
+          wash: AppColors.orangeWash,
+          onTap: () => onOpen(const ProfitLossScreen()),
+        ),
       if (canManageAgents)
         AppActionTile(
           label: 'My agents',
