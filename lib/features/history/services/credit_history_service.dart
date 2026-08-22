@@ -7,12 +7,20 @@ class CreditHistoryService {
   // ⭐️ ApiClient ရဲ့ dio ကို ယူသုံးပါ (Token Auto ပါသွားပါလိမ့်မယ်)
   final Dio _dio = ApiClient().dio;
 
-  Future<CreditHistoryResponse?> getCreditHistory({int page = 1}) async {
+  /// [type] is 'add' or 'spend', or null for everything. Filtering happens
+  /// server-side — the screen only ever holds one page.
+  Future<CreditHistoryResponse?> getCreditHistory({
+    int page = 1,
+    String? type,
+  }) async {
     try {
       // ApiClient မှာ baseUrl ထည့်ထားပြီးသားမို့ path ပဲ ပေးလိုက်ရင် ရပါပြီ
       final response = await _dio.get(
         ApiConfig.agentCreditHistory,
-        queryParameters: {'page': page},
+        queryParameters: {
+          'page': page,
+          if (type != null) 'type': type,
+        },
       );
 
       if (response.statusCode == 200) {

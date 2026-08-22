@@ -126,18 +126,41 @@ class _MainScaffoldState extends State<MainScaffold> {
     final index = _items.indexWhere((i) => i.label == label);
     if (index < 0) return;
 
+    final filterChanged = userFilter != null && userFilter != _userFilter;
+
     setState(() {
-      if (userFilter != null && userFilter != _userFilter) {
+      if (filterChanged) {
         _userFilter = userFilter;
         _userFilterEpoch++;
       }
       _selectedIndex = index;
     });
 
-    // Any detail screen already open in the destination tab is dismissed, so
-    // the agent lands on the list they asked for rather than behind something.
     final nav = _keyFor(label).currentState;
-    if (nav != null && nav.canPop()) nav.popUntil((r) => r.isFirst);
+    if (nav == null) return;
+
+    // A tab's Navigator builds its root route once. Rebuilding the widget
+    // inside it with a new key was not enough — onGenerateRoute had already
+    // run, so the Users tab kept whatever filter it was first opened with and
+    // the dashboard's stat tiles all landed on the same list.
+    //
+    // Replacing the root route is what actually applies the new filter.
+    if (filterChanged) {
+      nav.pushAndRemoveUntil(
+        MaterialPageRoute(
+          builder: (_) => UserManagementScreen(
+            key: ValueKey('users-$_userFilter-$_userFilterEpoch'),
+            initialFilter: _userFilter,
+          ),
+        ),
+        (route) => false,
+      );
+      return;
+    }
+
+    // Otherwise just dismiss any detail screen, so the agent lands on the
+    // list rather than behind something.
+    if (nav.canPop()) nav.popUntil((r) => r.isFirst);
   }
 
   void _onTap(int index) {

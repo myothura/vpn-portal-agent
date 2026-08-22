@@ -416,13 +416,11 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                       ),
                     ),
             ),
-            // Hidden when the expiring filter is active (the whole list is
-            // already that set) and while search is open (the results are
-            // what the agent is looking at, not this).
-            if (_urgent.isNotEmpty &&
-                _query.isEmpty &&
-                !_searchOpen &&
-                _filter != 'expiring')
+            // Hidden only while search is open — those results are what the
+            // agent is looking at. It stays under the expiring filter: the
+            // list there is ordered by expiry but paginated, and the strip
+            // still puts the ten most urgent one tap away without scrolling.
+            if (_urgent.isNotEmpty && _query.isEmpty && !_searchOpen)
               _UrgentStrip(
                 users: _urgent,
                 total: _urgentTotal,

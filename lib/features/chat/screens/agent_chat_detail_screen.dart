@@ -1013,18 +1013,22 @@ class _TextBubble extends StatelessWidget {
                     // The tail — the one squared corner — belongs to the last
                     // bubble of a run. Giving every bubble a tail made a run
                     // of five look like five separate turns.
+                    // The tail corner is 10, not 4, and a mid-run corner
+                    // is 12, not 6. Those were tight enough to read as square
+                    // against an 18px opposite corner — enough of a tail to
+                    // group a run, without a hard edge.
                     borderRadius: BorderRadius.only(
                       topLeft: Radius.circular(
-                        !isMine && !isFirstInRun ? 6 : 16,
+                        !isMine && !isFirstInRun ? 12 : 18,
                       ),
                       topRight: Radius.circular(
-                        isMine && !isFirstInRun ? 6 : 16,
+                        isMine && !isFirstInRun ? 12 : 18,
                       ),
                       bottomLeft: Radius.circular(
-                        isMine || !isLastInRun ? 16 : 4,
+                        isMine || !isLastInRun ? 18 : 10,
                       ),
                       bottomRight: Radius.circular(
-                        !isMine || !isLastInRun ? 16 : 4,
+                        !isMine || !isLastInRun ? 18 : 10,
                       ),
                     ),
                     border: isMine ? null : Border.all(color: AppColors.border),
@@ -1826,10 +1830,10 @@ class _TypingBubbleState extends State<_TypingBubble>
               color: AppColors.surface,
               border: Border.all(color: AppColors.border),
               borderRadius: const BorderRadius.only(
-                topLeft: Radius.circular(16),
-                topRight: Radius.circular(16),
-                bottomRight: Radius.circular(16),
-                bottomLeft: Radius.circular(4),
+                topLeft: Radius.circular(18),
+                topRight: Radius.circular(18),
+                bottomRight: Radius.circular(18),
+                bottomLeft: Radius.circular(10),
               ),
             ),
             child: RepaintBoundary(
