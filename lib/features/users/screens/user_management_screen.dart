@@ -523,7 +523,7 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
           FloatingActionButton(
             heroTag: 'add',
             onPressed: _addUser,
-            backgroundColor: AppColors.accent,
+            backgroundColor: AppColors.accentInk,
             foregroundColor: AppColors.textOnAccent,
             shape: const CircleBorder(),
             child: const Icon(Iconsax.add, size: 26),
@@ -1033,7 +1033,10 @@ class _FilterChip extends StatelessWidget {
     // hues across four chips gave every option equal visual weight and told
     // the eye nothing about which was active.
     return Material(
-      color: selected ? AppColors.accent : AppColors.surface,
+      // Deep green, matching the buttons. The bright accent is for fills and
+      // status marks; using it on a control this size made the chip the
+      // loudest thing on a screen whose subject is the list below it.
+      color: selected ? AppColors.accentInk : AppColors.surface,
       borderRadius: BorderRadius.circular(999),
       child: InkWell(
         onTap: onTap,
@@ -1044,7 +1047,7 @@ class _FilterChip extends StatelessWidget {
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(999),
             border: Border.all(
-              color: selected ? AppColors.accent : AppColors.border,
+              color: selected ? AppColors.accentInk : AppColors.border,
             ),
           ),
           child: Row(

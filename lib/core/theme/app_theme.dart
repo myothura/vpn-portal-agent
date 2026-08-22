@@ -135,7 +135,10 @@ class AppTheme {
 
     filledButtonTheme: FilledButtonThemeData(
       style: FilledButton.styleFrom(
-        backgroundColor: AppColors.accent,
+        // Deep green, not the bright accent. The bright tone is for fills and
+        // indicators; a full-width button in it dominates every screen it is
+        // on, and white text over it sits at roughly 2.3:1.
+        backgroundColor: AppColors.accentInk,
         foregroundColor: AppColors.textOnAccent,
         elevation: 0,
         minimumSize: const Size(0, 48),
