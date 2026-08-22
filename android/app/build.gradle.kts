@@ -1,3 +1,14 @@
+import java.util.Properties
+import java.io.FileInputStream
+
+// Release signing credentials. key.properties and the keystore are both in
+// .gitignore — the password would otherwise be in every clone of the repo.
+val keystoreProperties = Properties()
+val keystorePropertiesFile = rootProject.file("key.properties")
+if (keystorePropertiesFile.exists()) {
+    keystoreProperties.load(FileInputStream(keystorePropertiesFile))
+}
+
 plugins {
     id("com.android.application")
     id("kotlin-android")
@@ -30,9 +41,32 @@ android {
         versionName = flutter.versionName
     }
 
+    signingConfigs {
+        create("release") {
+            keyAlias = keystoreProperties["keyAlias"] as String?
+            keyPassword = keystoreProperties["keyPassword"] as String?
+            storeFile = keystoreProperties["storeFile"]?.let { file(it) }
+            storePassword = keystoreProperties["storePassword"] as String?
+        }
+    }
+
     buildTypes {
         release {
-            signingConfig = signingConfigs.getByName("debug")
+            // Was signing with the debug key, which is a well-known keypair
+            // shipped with the SDK: anyone could have rebuilt and re-signed
+            // the APK and it would install over this one as an update.
+            signingConfig = signingConfigs.getByName("release")
+
+            // R8: renames classes and methods, strips unused code, and drops
+            // the line tables a decompiler reads. It does not make the APK
+            // unreadable — nothing does — but it turns a legible Kotlin
+            // reconstruction into something that has to be worked out.
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
         }
     }
 }
