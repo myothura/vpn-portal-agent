@@ -1,131 +1,19 @@
-import 'dart:async';
-import 'dart:math';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart'; // ⭐️ Import added for HapticFeedback
+import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:iconsax/iconsax.dart';
-import 'package:intl/intl.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 
-// Configs & Widgets
+import 'package:vpn_agent_app/core/services/credential_store.dart';
 import 'package:vpn_agent_app/core/theme/app_colors.dart';
+import 'package:vpn_agent_app/core/theme/app_theme.dart';
 import 'package:vpn_agent_app/l10n/app_localizations.dart';
-import 'package:vpn_agent_app/shared_widgets/language_picker_widget.dart';
+import 'package:vpn_agent_app/shared_widgets/theme_helpers.dart';
 
-// Bloc Imports
 import 'package:vpn_agent_app/features/auth/bloc/agent_login_bloc.dart';
 import 'package:vpn_agent_app/features/scaffold/main_scaffold.dart';
+import 'package:vpn_agent_app/core/navigation/app_transitions.dart';
 
-// --- 1. Animation Helpers ---
-class FadeInUp extends StatefulWidget {
-  final Widget child;
-  final Duration delay;
-  final Duration duration;
-  final double slideOffset;
-
-  const FadeInUp({
-    super.key,
-    required this.child,
-    this.delay = Duration.zero,
-    this.duration = const Duration(milliseconds: 600),
-    this.slideOffset = 0.2,
-  });
-
-  @override
-  State<FadeInUp> createState() => _FadeInUpState();
-}
-
-class _FadeInUpState extends State<FadeInUp>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _controller;
-  late final Animation<double> _opacity;
-  late final Animation<Offset> _offset;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = AnimationController(vsync: this, duration: widget.duration);
-    _opacity = CurvedAnimation(parent: _controller, curve: Curves.easeOut);
-    _offset = Tween<Offset>(
-      begin: Offset(0, widget.slideOffset),
-      end: Offset.zero,
-    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeOutQuart));
-
-    Timer(widget.delay, () {
-      if (mounted) _controller.forward();
-    });
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return FadeTransition(
-      opacity: _opacity,
-      child: SlideTransition(position: _offset, child: widget.child),
-    );
-  }
-}
-
-// --- 2. Particle System ---
-class Particle {
-  Offset position;
-  final Color color;
-  final double radius;
-  final Offset velocity;
-  Particle({
-    required this.position,
-    required this.color,
-    required this.radius,
-    required this.velocity,
-  });
-}
-
-class ParticlePainter extends CustomPainter {
-  final List<Particle> particles;
-  final Animation<double> animation;
-  final double verticalBounds;
-
-  ParticlePainter({
-    required this.particles,
-    required this.animation,
-    this.verticalBounds = 1.0,
-  }) : super(repaint: animation);
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint();
-    final double bottomBoundary = size.height * verticalBounds;
-
-    for (var particle in particles) {
-      particle.position += particle.velocity;
-      if (particle.position.dx < 0) {
-        particle.position = Offset(size.width, particle.position.dy);
-      }
-      if (particle.position.dx > size.width) {
-        particle.position = Offset(0, particle.position.dy);
-      }
-      if (particle.position.dy < 0) {
-        particle.position = Offset(particle.position.dx, bottomBoundary);
-      }
-      if (particle.position.dy > bottomBoundary) {
-        particle.position = Offset(particle.position.dx, 0);
-      }
-      paint.color = particle.color;
-      canvas.drawCircle(particle.position, particle.radius, paint);
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
-}
-
-// --- 3. Login Screen (Main Entry) ---
 class LoginScreen extends StatelessWidget {
   const LoginScreen({super.key});
 
@@ -138,7 +26,6 @@ class LoginScreen extends StatelessWidget {
   }
 }
 
-// --- 4. Login View (UI & Logic) ---
 class _LoginView extends StatefulWidget {
   const _LoginView();
 
@@ -146,698 +33,449 @@ class _LoginView extends StatefulWidget {
   State<_LoginView> createState() => _LoginViewState();
 }
 
-class _LoginViewState extends State<_LoginView>
-    with TickerProviderStateMixin, WidgetsBindingObserver {
+class _LoginViewState extends State<_LoginView> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
+  final _passwordFocus = FocusNode();
+
+  /// Validation lives in the form rather than being discovered by the server.
+  /// The previous screen let an empty username and password through to a
+  /// round-trip that could only come back "invalid credentials".
+  final _formKey = GlobalKey<FormState>();
 
   bool _rememberMe = false;
+  String _version = '';
 
-  late AnimationController _particleController;
-  late AnimationController _logoController;
-  late Animation<double> _logoScale;
-
-  List<Particle> _particles = [];
-  final int _particleCount = 40;
-  final Random _random = Random();
+  /// Shown above the form. A snackbar alone slides away after four seconds and
+  /// leaves nothing behind, so an agent who looked away has no idea why the
+  /// login did not go through.
+  String? _error;
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this);
+    _restoreCredentials();
+    _loadVersion();
+  }
 
-    _particleController = AnimationController(
-      vsync: this,
-      duration: const Duration(seconds: 30),
-    )..repeat();
+  Future<void> _restoreCredentials() async {
+    // Moves any password left in plain-text SharedPreferences by an older
+    // build into the keystore before reading.
+    await CredentialStore.migrateLegacyPassword();
 
-    _logoController = AnimationController(
-      vsync: this,
-      duration: const Duration(seconds: 2),
-    )..repeat(reverse: true);
-    _logoScale = Tween<double>(begin: 1.0, end: 1.05).animate(
-      CurvedAnimation(parent: _logoController, curve: Curves.easeInOut),
-    );
-
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      final size = MediaQuery.of(context).size;
-      _generateParticles(size);
+    final saved = await CredentialStore.read();
+    if (saved == null || !mounted) return;
+    setState(() {
+      _rememberMe = true;
+      _emailController.text = saved.email;
+      _passwordController.text = saved.password;
     });
-
-    _loadUserCredentials();
   }
 
-  void _generateParticles(Size size) {
-    _particles = List.generate(_particleCount, (index) {
-      return Particle(
-        position: Offset(
-          _random.nextDouble() * size.width,
-          _random.nextDouble() * size.height,
-        ),
-        color: AppColors.accentGreen.withOpacity(_random.nextDouble() * 0.15),
-        radius: _random.nextDouble() * 2.5,
-        velocity: Offset(
-          (_random.nextDouble() - 0.5) * 0.5,
-          (_random.nextDouble() - 0.5) * 0.5,
-        ),
-      );
-    });
-    if (mounted) setState(() {});
-  }
-
-  Future<void> _loadUserCredentials() async {
-    final prefs = await SharedPreferences.getInstance();
-    final rememberMe = prefs.getBool('remember_me') ?? false;
-
-    if (rememberMe && mounted) {
-      setState(() {
-        _rememberMe = true;
-        _emailController.text = prefs.getString('saved_email') ?? '';
-        _passwordController.text = prefs.getString('saved_password') ?? '';
-      });
-    }
-  }
-
-  Future<void> _saveUserCredentials(String email, String password) async {
-    final prefs = await SharedPreferences.getInstance();
-    if (_rememberMe) {
-      await prefs.setBool('remember_me', true);
-      await prefs.setString('saved_email', email);
-      await prefs.setString('saved_password', password);
-    } else {
-      await prefs.remove('remember_me');
-      await prefs.remove('saved_email');
-      await prefs.remove('saved_password');
-    }
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) {
-      if (!_particleController.isAnimating) _particleController.repeat();
-      if (!_logoController.isAnimating) _logoController.repeat(reverse: true);
-    } else {
-      _particleController.stop();
-      _logoController.stop();
-    }
+  /// Read from the bundle, not hard-coded. The old screen displayed "v2.0.0"
+  /// as a literal, which drifted from the actual build the moment either
+  /// changed.
+  Future<void> _loadVersion() async {
+    try {
+      final info = await PackageInfo.fromPlatform();
+      if (mounted) setState(() => _version = 'v${info.version}');
+    } catch (_) {}
   }
 
   @override
   void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
-    _particleController.dispose();
-    _logoController.dispose();
     _emailController.dispose();
     _passwordController.dispose();
+    _passwordFocus.dispose();
     super.dispose();
+  }
+
+  /// The bloc surfaces `e.toString()` for anything that throws, so a dead
+  /// network arrives here as a Dio dump. Left as-is it reads as though the
+  /// credentials were wrong, which sends people to reset a password that was
+  /// never the problem.
+  static String _readableError(String? raw) {
+    if (raw == null || raw.isEmpty) return 'Login failed. Please try again.';
+    final lower = raw.toLowerCase();
+    if (lower.contains('socketexception') ||
+        lower.contains('failed host lookup') ||
+        lower.contains('connection') ||
+        lower.contains('timeout')) {
+      return 'Cannot reach the server. Check your connection and try again.';
+    }
+    return raw;
+  }
+
+  void _submit() {
+    FocusScope.of(context).unfocus();
+    if (!(_formKey.currentState?.validate() ?? false)) return;
+    setState(() => _error = null);
+    HapticFeedback.lightImpact();
+    context.read<AgentLoginBloc>().add(
+          AgentLoginSubmitted(
+            email: _emailController.text.trim(),
+            password: _passwordController.text,
+          ),
+        );
   }
 
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context);
+    final t = Theme.of(context).textTheme;
 
     return BlocListener<AgentLoginBloc, AgentLoginState>(
       listener: (context, state) async {
         if (state.status == AgentLoginStatus.failure) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(state.errorMessage ?? "Login Failed"),
-              backgroundColor: Colors.redAccent,
-              behavior: SnackBarBehavior.floating,
-            ),
-          );
+          setState(() => _error = _readableError(state.errorMessage));
         } else if (state.status == AgentLoginStatus.success) {
-          await _saveUserCredentials(
-            _emailController.text.trim(),
-            _passwordController.text.trim(),
-          );
-
-          if (mounted) {
+          if (_rememberMe) {
+            await CredentialStore.save(
+              email: _emailController.text.trim(),
+              password: _passwordController.text,
+            );
+          } else {
+            // Unticking must actually erase what a previous session stored,
+            // not merely stop writing.
+            await CredentialStore.clear();
+          }
+          if (context.mounted) {
             Navigator.pushReplacement(
               context,
-              MaterialPageRoute(builder: (context) => const MainScaffold()),
+              AppTransitions.fadeThrough(const MainScaffold()),
             );
           }
         }
       },
       child: Scaffold(
-        backgroundColor: Colors.black,
-        resizeToAvoidBottomInset: true,
-        body: Stack(
-          fit: StackFit.expand,
-          children: [
-            Container(
-              decoration: const BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  colors: [Colors.black, Colors.black],
-                ),
-              ),
-            ),
-
-            CustomPaint(
-              painter: ParticlePainter(
-                particles: _particles,
-                animation: _particleController,
-              ),
-            ),
-
-            SafeArea(
-              child: Stack(
-                children: [
-                  Center(
-                    child: SingleChildScrollView(
-                      padding: const EdgeInsets.symmetric(horizontal: 24.0),
+        backgroundColor: AppColors.background,
+        body: SafeArea(
+          child: Column(
+            children: [
+              Expanded(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
+                  child: Form(
+                    key: _formKey,
+                    child: AutofillGroup(
                       child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          // --- Logo (Balanced Size: 90) ---
-                          FadeInUp(
-                            child: Center(
-                              child: AnimatedBuilder(
-                                animation: _logoController,
-                                builder: (context, child) {
-                                  return Transform.scale(
-                                    scale: _logoScale.value,
-                                    child: Container(
-                                      width: 96,
-                                      height: 96,
-                                      decoration: BoxDecoration(
-                                        shape: BoxShape.circle,
-                                        border: Border.all(
-                                          color: AppColors.accentGreen
-                                              .withOpacity(0.08),
-                                          width: 1,
-                                        ),
-                                      ),
-                                      child: Center(
-                                        child: Container(
-                                          width: 80,
-                                          height: 80,
-                                          padding: const EdgeInsets.all(18),
-                                          decoration: BoxDecoration(
-                                            shape: BoxShape.circle,
-                                            color: AppColors.accentGreen
-                                                .withOpacity(0.08),
-                                            border: Border.all(
-                                              color: AppColors.accentGreen
-                                                  .withOpacity(0.3),
-                                              width: 1.5,
-                                            ),
-                                            boxShadow: [
-                                              BoxShadow(
-                                                color: AppColors.accentGreen
-                                                    .withOpacity(0.15),
-                                                blurRadius: 40,
-                                                spreadRadius: 5,
-                                              ),
-                                            ],
-                                          ),
-                                          child: Icon(
-                                            Iconsax.shield_tick,
-                                            size: 34,
-                                            color: AppColors.accentGreen,
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                  );
-                                },
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        FadeInUp(
+                          slideOffset: 0.08,
+                          child: Image.asset(
+                            'assets/images/login_hero.png',
+                            fit: BoxFit.contain,
+                          ),
+                        ),
+                        const SizedBox(height: 20),
+                        FadeInUp(
+                          delay: const Duration(milliseconds: 60),
+                          slideOffset: 0.08,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              // Left-aligned and split by weight rather than
+                              // two centred lines of identical size. The
+                              // greeting is context; the subject is the line
+                              // that should carry.
+                              Text(
+                                'Welcome back',
+                                style: t.bodyMedium?.copyWith(
+                                  fontWeight: FontWeight.w600,
+                                ),
                               ),
-                            ),
-                          ),
-                          const SizedBox(height: 22),
-
-                          FadeInUp(
-                            delay: const Duration(milliseconds: 200),
-                            child: Text(
-                              "AGENT PORTAL",
-                              textAlign: TextAlign.center,
-                              style: GoogleFonts.exo2(
-                                fontSize: 22,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.white,
-                                letterSpacing: 3.0,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          FadeInUp(
-                            delay: const Duration(milliseconds: 300),
-                            child: Row(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Text(
-                                  "Manage your VPN network securely",
-                                  textAlign: TextAlign.center,
-                                  style: GoogleFonts.ibmPlexSans(
-                                    fontSize: 13,
-                                    color: Colors.white.withOpacity(0.4),
+                              const SizedBox(height: 6),
+                              RichText(
+                                text: TextSpan(
+                                  style: t.headlineMedium?.copyWith(
+                                    height: 1.25,
+                                    letterSpacing: -0.3,
                                   ),
-                                ),
-                              ],
-                            ),
-                          ),
-
-                          const SizedBox(height: 32),
-
-                          FadeInUp(
-                            delay: const Duration(milliseconds: 400),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Padding(
-                                  padding: const EdgeInsets.only(
-                                    left: 4,
-                                    bottom: 8,
-                                  ),
-                                  child: Text(
-                                    "USERNAME",
-                                    style: GoogleFonts.exo2(
-                                      color: Colors.white.withOpacity(0.3),
-                                      fontSize: 10,
-                                      fontWeight: FontWeight.bold,
-                                      letterSpacing: 1.5,
-                                    ),
-                                  ),
-                                ),
-                                _buildGlassTextField(
-                                  controller: _emailController,
-                                  icon: Iconsax.user,
-                                  hint: l10n?.username ?? "Agent Username",
-                                ),
-                              ],
-                            ),
-                          ),
-
-                          const SizedBox(height: 16),
-
-                          FadeInUp(
-                            delay: const Duration(milliseconds: 500),
-                            child: BlocBuilder<AgentLoginBloc, AgentLoginState>(
-                              buildWhen: (prev, curr) =>
-                                  prev.isPasswordVisible !=
-                                  curr.isPasswordVisible,
-                              builder: (context, state) {
-                                return Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
-                                    Padding(
-                                      padding: const EdgeInsets.only(
-                                        left: 4,
-                                        bottom: 8,
+                                    const TextSpan(text: 'Manage your\n'),
+                                    TextSpan(
+                                      text: 'VPN network',
+                                      style: TextStyle(
+                                        color: AppColors.accentInk,
                                       ),
-                                      child: Text(
-                                        "PASSWORD",
-                                        style: GoogleFonts.exo2(
-                                          color: Colors.white.withOpacity(0.3),
-                                          fontSize: 10,
-                                          fontWeight: FontWeight.bold,
-                                          letterSpacing: 1.5,
-                                        ),
-                                      ),
-                                    ),
-                                    _buildGlassTextField(
-                                      controller: _passwordController,
-                                      icon: Iconsax.lock,
-                                      hint: l10n?.password ?? "Password",
-                                      isPassword: !state.isPasswordVisible,
-                                      onSuffixTap: () {
-                                        context.read<AgentLoginBloc>().add(
-                                          AgentLoginPasswordVisibilityToggled(),
-                                        );
-                                      },
                                     ),
                                   ],
-                                );
-                              },
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 28),
+                        if (_error != null) ...[
+                          _ErrorBanner(message: _error!),
+                          const SizedBox(height: 14),
+                        ],
+                        FadeInUp(
+                          delay: const Duration(milliseconds: 90),
+                          slideOffset: 0.08,
+                          child: BlocBuilder<AgentLoginBloc, AgentLoginState>(
+                            buildWhen: (a, b) => a.status != b.status,
+                            builder: (context, state) => _Field(
+                              controller: _emailController,
+                              label: l10n?.username ?? 'Username',
+                              icon: Iconsax.user,
+                              enabled:
+                                  state.status != AgentLoginStatus.loading,
+                              textInputAction: TextInputAction.next,
+                              autofillHints: const [AutofillHints.username],
+                              onSubmitted: (_) =>
+                                  _passwordFocus.requestFocus(),
+                              validator: (v) => (v == null || v.trim().isEmpty)
+                                  ? 'Enter your username'
+                                  : null,
                             ),
                           ),
-
-                          // --- Remember Me ---
-                          FadeInUp(
-                            delay: const Duration(milliseconds: 600),
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(vertical: 20),
-                              child: Row(
-                                mainAxisAlignment:
-                                    MainAxisAlignment.spaceBetween,
-                                children: [
-                                  GestureDetector(
-                                    onTap: () {
-                                      setState(
-                                        () => _rememberMe = !_rememberMe,
-                                      );
-                                      HapticFeedback.lightImpact();
-                                    },
-                                    behavior: HitTestBehavior.opaque,
-                                    child: Row(
-                                      children: [
-                                        AnimatedContainer(
-                                          duration: const Duration(
-                                            milliseconds: 200,
-                                          ),
-                                          width: 40,
-                                          height: 22,
-                                          decoration: BoxDecoration(
-                                            color: _rememberMe
-                                                ? AppColors.accentGreen
-                                                : Colors.white.withOpacity(
-                                                    0.08,
-                                                  ),
-                                            borderRadius: BorderRadius.circular(
-                                              11,
-                                            ),
-                                            border: Border.all(
-                                              color: _rememberMe
-                                                  ? AppColors.accentGreen
-                                                        .withOpacity(0.5)
-                                                  : Colors.white.withOpacity(
-                                                      0.1,
-                                                    ),
-                                            ),
-                                          ),
-                                          child: AnimatedAlign(
-                                            duration: const Duration(
-                                              milliseconds: 200,
-                                            ),
-                                            alignment: _rememberMe
-                                                ? Alignment.centerRight
-                                                : Alignment.centerLeft,
-                                            child: Container(
+                        ),
+                        const SizedBox(height: 14),
+                        FadeInUp(
+                          delay: const Duration(milliseconds: 160),
+                          slideOffset: 0.08,
+                          child: BlocBuilder<AgentLoginBloc, AgentLoginState>(
+                            // Also on status: the field must lock while the
+                            // request is in flight, not only repaint when the
+                            // eye is toggled.
+                            buildWhen: (a, b) =>
+                                a.isPasswordVisible != b.isPasswordVisible ||
+                                a.status != b.status,
+                            builder: (context, state) => _Field(
+                              controller: _passwordController,
+                              focusNode: _passwordFocus,
+                              label: l10n?.password ?? 'Password',
+                              icon: Iconsax.lock,
+                              enabled:
+                                  state.status != AgentLoginStatus.loading,
+                              obscure: !state.isPasswordVisible,
+                              textInputAction: TextInputAction.done,
+                              autofillHints: const [AutofillHints.password],
+                              onSubmitted: (_) => _submit(),
+                              validator: (v) => (v == null || v.isEmpty)
+                                  ? 'Enter your password'
+                                  : null,
+                              trailing: IconButton(
+                                icon: Icon(
+                                  state.isPasswordVisible
+                                      ? Iconsax.eye_slash
+                                      : Iconsax.eye,
+                                  size: 18,
+                                  color: AppColors.textTertiary,
+                                ),
+                                onPressed: () => context
+                                    .read<AgentLoginBloc>()
+                                    .add(AgentLoginPasswordVisibilityToggled()),
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        FadeInUp(
+                          delay: const Duration(milliseconds: 220),
+                          slideOffset: 0.08,
+                          child: _RememberRow(
+                            value: _rememberMe,
+                            onChanged: (v) => setState(() => _rememberMe = v),
+                          ),
+                        ),
+                        const SizedBox(height: 22),
+                        FadeInUp(
+                          delay: const Duration(milliseconds: 280),
+                          slideOffset: 0.08,
+                          child: BlocBuilder<AgentLoginBloc, AgentLoginState>(
+                            builder: (context, state) {
+                              final busy =
+                                  state.status == AgentLoginStatus.loading;
+                              return FilledButton(
+                                onPressed: busy ? null : _submit,
+                                style: FilledButton.styleFrom(
+                                  // Disabled-while-busy normally greys out,
+                                  // which reads as "broken" rather than
+                                  // "working". Hold the brand colour and let
+                                  // the spinner carry the state.
+                                  disabledBackgroundColor: AppColors.accentInk,
+                                  disabledForegroundColor:
+                                      AppColors.textOnAccent,
+                                ),
+                                child: AnimatedSwitcher(
+                                  duration: const Duration(milliseconds: 180),
+                                  child: busy
+                                      ? Row(
+                                          key: const ValueKey('busy'),
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            const SizedBox(
                                               width: 16,
                                               height: 16,
-                                              margin:
-                                                  const EdgeInsets.symmetric(
-                                                    horizontal: 3,
-                                                  ),
-                                              decoration: BoxDecoration(
-                                                color: _rememberMe
-                                                    ? Colors.white
-                                                    : Colors.white.withOpacity(
-                                                        0.35,
-                                                      ),
-                                                shape: BoxShape.circle,
+                                              child:
+                                                  CircularProgressIndicator(
+                                                strokeWidth: 2,
+                                                color:
+                                                    AppColors.textOnAccent,
                                               ),
                                             ),
-                                          ),
+                                            const SizedBox(width: 10),
+                                            Text('Signing in',
+                                                style: t.labelLarge?.copyWith(
+                                                    color: AppColors
+                                                        .textOnAccent)),
+                                          ],
+                                        )
+                                      : Text(
+                                          l10n?.login ?? 'Log in',
+                                          key: const ValueKey('idle'),
                                         ),
-                                        const SizedBox(width: 10),
-                                        Text(
-                                          "Remember Me",
-                                          style: GoogleFonts.ibmPlexSans(
-                                            color: _rememberMe
-                                                ? Colors.white.withOpacity(0.8)
-                                                : Colors.white.withOpacity(0.4),
-                                            fontSize: 13,
-                                            fontWeight: FontWeight.w500,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-
-                          // --- Login Button ---
-                          FadeInUp(
-                            delay: const Duration(milliseconds: 700),
-                            child: BlocBuilder<AgentLoginBloc, AgentLoginState>(
-                              builder: (context, state) {
-                                return _buildGlassLoginButton(
-                                  l10n?.login ?? "LOGIN",
-                                  state.status == AgentLoginStatus.loading
-                                      ? null
-                                      : () {
-                                          FocusScope.of(context).unfocus();
-                                          context.read<AgentLoginBloc>().add(
-                                            AgentLoginSubmitted(
-                                              email: _emailController.text
-                                                  .trim(),
-                                              password: _passwordController.text
-                                                  .trim(),
-                                            ),
-                                          );
-                                        },
-                                  isLoading:
-                                      state.status == AgentLoginStatus.loading,
-                                );
-                              },
-                            ),
-                          ),
-
-                          const SizedBox(height: 24),
-                        ],
-                      ),
-                    ),
-                  ),
-
-                  // ✅ Language Picker (Balanced Scale)
-                  Positioned(
-                    top: 16.0,
-                    left: 16.0,
-                    child: Transform.scale(
-                      scale: 0.85, // Adjusted to 0.85
-                      child: const LanguagePickerWidget(),
-                    ),
-                  ),
-
-                  // ✅ SIGN IN Text (Balanced Font Size)
-                  Positioned(
-                    top: 24.0,
-                    right: 24.0,
-                    child: FadeInUp(
-                      delay: const Duration(milliseconds: 200),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 14,
-                          vertical: 7,
-                        ),
-                        decoration: BoxDecoration(
-                          color: Colors.white.withOpacity(0.04),
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(
-                            color: Colors.white.withOpacity(0.06),
-                          ),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              Iconsax.login,
-                              size: 14,
-                              color: AppColors.accentGreen.withOpacity(0.6),
-                            ),
-                            const SizedBox(width: 8),
-                            Text(
-                              "SIGN IN",
-                              style: GoogleFonts.exo2(
-                                color: Colors.white.withOpacity(0.6),
-                                fontSize: 12,
-                                fontWeight: FontWeight.bold,
-                                letterSpacing: 1.2,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-
-                  // ✅ Updated Footer
-                  Positioned(
-                    bottom: 20,
-                    left: 0,
-                    right: 0,
-                    child: FadeInUp(
-                      delay: const Duration(milliseconds: 1000),
-                      child: Center(
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Icon(
-                                  Iconsax.code_1,
-                                  size: 12,
-                                  color: Colors.white.withOpacity(0.2),
                                 ),
-                                const SizedBox(width: 6),
-                                Text(
-                                  "Develop By Ghost Developer",
-                                  style: GoogleFonts.ibmPlexSans(
-                                    color: Colors.white.withOpacity(0.2),
-                                    fontSize: 10,
-                                    fontWeight: FontWeight.w500,
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              "v2.0.0",
-                              style: GoogleFonts.spaceMono(
-                                color: Colors.white.withOpacity(0.12),
-                                fontSize: 9,
-                              ),
-                            ),
-                          ],
+                              );
+                            },
+                          ),
                         ),
+                      ],
                       ),
                     ),
                   ),
-                ],
+                ),
               ),
+              Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: Text(
+                  _version,
+                  style: t.bodySmall?.copyWith(color: AppColors.textTertiary),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Labelled input. Uses the theme's InputDecorationTheme, so field styling is
+/// defined once rather than restated on every screen.
+class _Field extends StatelessWidget {
+  final TextEditingController controller;
+  final String label;
+  final IconData icon;
+  final bool obscure;
+  final Widget? trailing;
+  final FocusNode? focusNode;
+  final TextInputAction textInputAction;
+  final ValueChanged<String>? onSubmitted;
+  final String? Function(String?)? validator;
+  final bool enabled;
+  final List<String>? autofillHints;
+
+  const _Field({
+    required this.controller,
+    required this.label,
+    required this.icon,
+    this.obscure = false,
+    this.trailing,
+    this.focusNode,
+    this.textInputAction = TextInputAction.next,
+    this.onSubmitted,
+    this.validator,
+    this.enabled = true,
+    this.autofillHints,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return TextFormField(
+      controller: controller,
+      focusNode: focusNode,
+      obscureText: obscure,
+      // Nothing on the form accepts input mid-request: editing a username
+      // while it is being submitted only creates a mismatch between what is
+      // on screen and what was actually sent.
+      enabled: enabled,
+      validator: validator,
+      textInputAction: textInputAction,
+      onFieldSubmitted: onSubmitted,
+      autocorrect: false,
+      enableSuggestions: !obscure,
+      autofillHints: autofillHints,
+      style: Theme.of(context).textTheme.bodyLarge,
+      decoration: InputDecoration(
+        labelText: label,
+        prefixIcon: Icon(icon, size: 18, color: AppColors.textTertiary),
+        suffixIcon: trailing,
+      ),
+    );
+  }
+}
+
+/// Checkbox row. The old control was a hand-built 40x22 toggle that looked
+/// like a switch — implying it took effect immediately, when it only decides
+/// what happens after a successful login.
+class _RememberRow extends StatelessWidget {
+  final bool value;
+  final ValueChanged<bool> onChanged;
+
+  const _RememberRow({required this.value, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: () {
+        HapticFeedback.selectionClick();
+        onChanged(!value);
+      },
+      borderRadius: BorderRadius.circular(AppTheme.radiusSm),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        child: Row(
+          children: [
+            Checkbox(
+              value: value,
+              onChanged: (v) => onChanged(v ?? false),
+              visualDensity: VisualDensity.compact,
+              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
             ),
+            const SizedBox(width: 8),
+            Text('Remember me',
+                style: Theme.of(context).textTheme.bodyMedium),
           ],
         ),
       ),
     );
   }
+}
 
-  // --- UI Helpers (Balanced Sizes) ---
-  Widget _buildGlassTextField({
-    required TextEditingController controller,
-    required IconData icon,
-    required String hint,
-    bool isPassword = false,
-    VoidCallback? onSuffixTap,
-  }) {
+/// Persistent failure notice. Sits above the form so the fields the agent is
+/// about to correct are directly beneath the reason.
+class _ErrorBanner extends StatelessWidget {
+  final String message;
+
+  const _ErrorBanner({required this.message});
+
+  @override
+  Widget build(BuildContext context) {
     return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.04),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: Colors.white.withOpacity(0.08)),
+        color: AppColors.dangerWash,
+        borderRadius: BorderRadius.circular(AppTheme.radiusMd),
       ),
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      child: TextField(
-        controller: controller,
-        obscureText: isPassword,
-        style: GoogleFonts.ibmPlexSans(
-          color: Colors.white,
-          fontSize: 14,
-          fontWeight: FontWeight.w500,
-        ),
-        cursorColor: AppColors.accentGreen,
-        decoration: InputDecoration(
-          icon: Icon(icon, color: Colors.white.withOpacity(0.3), size: 20),
-          hintText: hint,
-          hintStyle: GoogleFonts.ibmPlexSans(
-            color: Colors.white.withOpacity(0.2),
-            fontSize: 14,
-          ),
-          border: InputBorder.none,
-          contentPadding: const EdgeInsets.symmetric(vertical: 16),
-          suffixIcon: onSuffixTap != null
-              ? IconButton(
-                  icon: Icon(
-                    isPassword ? Iconsax.eye_slash : Iconsax.eye,
-                    color: Colors.white.withOpacity(0.3),
-                    size: 20,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(Iconsax.info_circle, size: 17, color: AppColors.danger),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              message,
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: AppColors.danger,
+                    fontWeight: FontWeight.w600,
                   ),
-                  onPressed: onSuffixTap,
-                )
-              : null,
-        ),
-      ),
-    );
-  }
-
-  Widget _buildGlassLoginButton(
-    String text,
-    VoidCallback? onPressed, {
-    bool isLoading = false,
-  }) {
-    final bool isEnabled = onPressed != null;
-
-    return GestureDetector(
-      onTapDown: (_) {
-        if (isEnabled) HapticFeedback.lightImpact();
-      },
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 300),
-        width: double.infinity,
-        height: 54,
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(18),
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: isEnabled
-                ? [
-                    AppColors.accentGreen.withOpacity(0.25),
-                    AppColors.accentGreen.withOpacity(0.08),
-                  ]
-                : [
-                    Colors.white.withOpacity(0.06),
-                    Colors.white.withOpacity(0.03),
-                  ],
-          ),
-          border: Border.all(
-            color: isEnabled
-                ? AppColors.accentGreen.withOpacity(0.4)
-                : Colors.white.withOpacity(0.08),
-            width: 1,
-          ),
-          boxShadow: isEnabled
-              ? [
-                  BoxShadow(
-                    color: AppColors.accentGreen.withOpacity(0.15),
-                    blurRadius: 20,
-                    offset: const Offset(0, 6),
-                  ),
-                ]
-              : [],
-        ),
-        child: ElevatedButton(
-          style: ElevatedButton.styleFrom(
-            backgroundColor: Colors.transparent,
-            shadowColor: Colors.transparent,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(18),
             ),
           ),
-          onPressed: onPressed,
-          child: isLoading
-              ? const SizedBox(
-                  width: 22,
-                  height: 22,
-                  child: CircularProgressIndicator(
-                    color: Colors.white,
-                    strokeWidth: 2,
-                  ),
-                )
-              : Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(
-                      Iconsax.login,
-                      size: 20,
-                      color: isEnabled
-                          ? Colors.white
-                          : Colors.white.withOpacity(0.3),
-                    ),
-                    const SizedBox(width: 10),
-                    Text(
-                      text.toUpperCase(),
-                      style: GoogleFonts.exo2(
-                        fontSize: 15,
-                        fontWeight: FontWeight.bold,
-                        color: isEnabled
-                            ? Colors.white
-                            : Colors.white.withOpacity(0.3),
-                        letterSpacing: 1.2,
-                      ),
-                    ),
-                  ],
-                ),
-        ),
+        ],
       ),
     );
   }

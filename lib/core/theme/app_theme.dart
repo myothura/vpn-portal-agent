@@ -97,25 +97,39 @@ class AppTheme {
 
     inputDecorationTheme: InputDecorationTheme(
       filled: true,
-      fillColor: AppColors.surfaceAlt,
+      // White on the page's grey, with a hairline: a grey fill with no border
+      // on a grey page reads as a flat void rather than a field.
+      fillColor: AppColors.surface,
       contentPadding:
-          const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+      isDense: true,
       hintStyle: _t(14, FontWeight.w500, AppColors.textTertiary),
+      // Label sizes shown at rest; it shrinks when it floats up on focus.
+      labelStyle: _t(14, FontWeight.w500, AppColors.textTertiary),
+      floatingLabelStyle: _t(12, FontWeight.w600, AppColors.accentInk),
       border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(radiusSm),
-        borderSide: BorderSide.none,
+        borderRadius: BorderRadius.circular(radiusMd),
+        borderSide: const BorderSide(color: AppColors.border),
       ),
       enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(radiusSm),
+        borderRadius: BorderRadius.circular(radiusMd),
         borderSide: const BorderSide(color: AppColors.border),
       ),
       focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(radiusSm),
+        borderRadius: BorderRadius.circular(radiusMd),
         borderSide: const BorderSide(color: AppColors.accent, width: 1.6),
       ),
       errorBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(radiusSm),
+        borderRadius: BorderRadius.circular(radiusMd),
         borderSide: const BorderSide(color: AppColors.danger),
+      ),
+      focusedErrorBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(radiusMd),
+        borderSide: const BorderSide(color: AppColors.danger, width: 1.6),
+      ),
+      disabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(radiusMd),
+        borderSide: const BorderSide(color: AppColors.border),
       ),
     ),
 
@@ -198,6 +212,15 @@ class AppTheme {
     listTileTheme: const ListTileThemeData(
       iconColor: AppColors.textSecondary,
       textColor: AppColors.textPrimary,
+    ),
+
+    checkboxTheme: CheckboxThemeData(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+      side: const BorderSide(color: AppColors.borderStrong, width: 1.5),
+      fillColor: WidgetStateProperty.resolveWith((states) =>
+          states.contains(WidgetState.selected)
+              ? AppColors.accent
+              : AppColors.surface),
     ),
 
     iconTheme: const IconThemeData(color: AppColors.textSecondary, size: 20),

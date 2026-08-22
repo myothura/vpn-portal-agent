@@ -45,6 +45,7 @@ dependencies:
   flutter_local_notifications: ^17.2.2
   web_socket_channel: ^3.0.3
   firebase_remote_config: ^5.5.0
+  package_info_plus: ^8.3.1
 
 dev_dependencies:
   flutter_test:
@@ -58,6 +59,7 @@ flutter:
 
   assets:
     - assets/animations/
+    - assets/images/
     # လိုအပ်ရင် ပုံတွေအတွက် path ထပ်ဖြည့်ပါ
     # - assets/images/ 
 
@@ -66,3 +68,9 @@ flutter_launcher_icons:
   ios: true
   image_path: "assets/icon/icon.png"
   min_sdk_android: 21
+  # The source is a circle with transparent corners so Android's launcher and
+  # its 12+ splash both mask cleanly. iOS rejects any icon carrying an alpha
+  # channel at submission, and it rounds the corners itself, so the alpha is
+  # flattened onto the artwork's own background colour for that platform only.
+  remove_alpha_ios: true
+  background_color_ios: "#0A3B22"

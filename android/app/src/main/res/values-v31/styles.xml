@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+        Android 12+ owns the launch splash and it cannot be skipped, so it is
+        configured here rather than fought with a second splash inside Flutter.
+
+        The icon points at a dedicated splash_icon asset, not the launcher
+        mipmap: the splash slot is 288dp (~1152px at xxxhdpi) and the launcher
+        icon is 192px, so reusing it upscaled sixfold and rendered soft.
+
+        No windowSplashScreenIconBackgroundColor — with one, the system fills
+        the whole circle and the mark reads as oversized. The artwork carries
+        its own rounded backdrop, and the inset is baked into the asset.
+    -->
+    <style name="LaunchTheme" parent="@android:style/Theme.Light.NoTitleBar">
+        <item name="android:windowBackground">@drawable/launch_background</item>
+        <item name="android:windowSplashScreenBackground">#F2F3F5</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@mipmap/splash_icon</item>
+    </style>
+    <style name="NormalTheme" parent="@android:style/Theme.Light.NoTitleBar">
+        <item name="android:windowBackground">?android:colorBackground</item>
+    </style>
+</resources>

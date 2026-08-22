@@ -9,6 +9,7 @@ import 'package:intl/intl.dart';
 import 'package:vpn_agent_app/core/theme/app_colors.dart';
 import 'package:vpn_agent_app/core/theme/app_theme.dart';
 import 'package:vpn_agent_app/shared_widgets/ui/app_surface.dart';
+import 'package:vpn_agent_app/shared_widgets/theme_helpers.dart';
 import 'package:vpn_agent_app/shared_widgets/ui/app_tiles.dart';
 
 import 'package:vpn_agent_app/features/dashboard/bloc/dashboard_bloc.dart';
@@ -26,6 +27,7 @@ import 'package:vpn_agent_app/features/profile/services/profile_service.dart';
 import 'package:vpn_agent_app/features/users/screens/add_user_screen.dart';
 import 'package:vpn_agent_app/features/users/screens/device_slot_management_screen.dart';
 import 'package:vpn_agent_app/features/users/screens/user_management_screen.dart';
+import 'package:vpn_agent_app/core/navigation/app_transitions.dart';
 
 class DashboardScreen extends StatelessWidget {
   const DashboardScreen({super.key});
@@ -56,6 +58,10 @@ class _DashboardViewState extends State<_DashboardView> {
   /// Which action tile is mid-flight, so the spinner sits in the tile that was
   /// tapped instead of an overlay covering the whole screen.
   String? _busyAction;
+
+  /// Identity of the current entrance run. The stagger plays once when the
+  /// screen first has data; it must not replay on every 30s poll.
+  final int _entranceKey = DateTime.now().microsecondsSinceEpoch;
 
   @override
   void initState() {
@@ -90,7 +96,9 @@ class _DashboardViewState extends State<_DashboardView> {
   }
 
   Future<void> _open(Widget screen) async {
-    await Navigator.push(context, MaterialPageRoute(builder: (_) => screen));
+    // Slide, not fade-through: these are details opened from the dashboard,
+    // so the motion should read as stepping into a hierarchy and back out.
+    await Navigator.push(context, AppTransitions.slide(screen));
     // The 30s poll picks up changes on its own; this just avoids a stale
     // number sitting on screen for up to half a minute after an edit.
     if (mounted) _refresh();
@@ -169,30 +177,52 @@ class _DashboardViewState extends State<_DashboardView> {
                     const _StaleStrip(),
                     const SizedBox(height: 12),
                   ],
-                  _Header(
-                    stats: stats,
-                    onNotifications: () => _open(const NotificationScreen()),
-                    onProfile: () => _open(const ProfileScreen()),
+                  // Sections fade up in sequence on first paint. Keyed to
+                  // _entranceKey, not rebuilt per poll: re-running the
+                  // entrance every 30 seconds would make the page flicker.
+                  _Enter(
+                    key: ValueKey('h$_entranceKey'),
+                    step: 0,
+                    child: _Header(
+                      stats: stats,
+                      onNotifications: () => _open(const NotificationScreen()),
+                      onProfile: () => _open(const ProfileScreen()),
+                    ),
                   ),
                   const SizedBox(height: 16),
-                  _RequestTicker(
-                    requests: stats.recentRequests,
-                    pendingCount: stats.pendingRequestCount,
-                    onTap: () => _open(const RenewalRequestsScreen()),
+                  _Enter(
+                    key: ValueKey('t$_entranceKey'),
+                    step: 1,
+                    child: _RequestTicker(
+                      requests: stats.recentRequests,
+                      pendingCount: stats.pendingRequestCount,
+                      onTap: () => _open(const RenewalRequestsScreen()),
+                    ),
                   ),
                   const SizedBox(height: 16),
-                  _BalanceCard(
-                    stats: stats,
-                    onHistory: () => _open(const CreditHistoryScreen()),
+                  _Enter(
+                    key: ValueKey('b$_entranceKey'),
+                    step: 2,
+                    child: _BalanceCard(
+                      stats: stats,
+                      onHistory: () => _open(const CreditHistoryScreen()),
+                    ),
                   ),
                   const SizedBox(height: 24),
                   const AppSectionHeader(title: 'Your users'),
                   const SizedBox(height: 12),
-                  _StatsGrid(stats: stats, onOpen: _open),
+                  _Enter(
+                    key: ValueKey('s$_entranceKey'),
+                    step: 3,
+                    child: _StatsGrid(stats: stats, onOpen: _open),
+                  ),
                   const SizedBox(height: 24),
                   const AppSectionHeader(title: 'Quick actions'),
                   const SizedBox(height: 12),
-                  _ActionsGrid(
+                  _Enter(
+                    key: ValueKey('a$_entranceKey'),
+                    step: 4,
+                    child: _ActionsGrid(
                     stats: stats,
                     busyAction: _busyAction,
                     canAccessChat: _canAccessChat,
@@ -200,6 +230,7 @@ class _DashboardViewState extends State<_DashboardView> {
                     canSendNoti: _canSendNoti,
                     onOpen: _open,
                     onPayment: _openPaymentMethods,
+                    ),
                   ),
                 ],
               ),
@@ -207,6 +238,27 @@ class _DashboardViewState extends State<_DashboardView> {
           },
         ),
       ),
+    );
+  }
+}
+
+/// Staggered fade-up. Thin wrapper over FadeInUp, which already existed in
+/// theme_helpers.dart and was never used by any screen.
+class _Enter extends StatelessWidget {
+  final Widget child;
+  final int step;
+
+  const _Enter({super.key, required this.child, required this.step});
+
+  @override
+  Widget build(BuildContext context) {
+    return FadeInUp(
+      // 70ms apart: enough to read as a sequence, short enough that the last
+      // section is up in under half a second.
+      delay: Duration(milliseconds: 70 * step),
+      duration: const Duration(milliseconds: 420),
+      slideOffset: 0.06,
+      child: child,
     );
   }
 }

@@ -4,7 +4,7 @@ import 'package:vpn_agent_app/core/theme/app_colors.dart';
 import 'package:vpn_agent_app/features/auth/screens/login_screen.dart';
 import 'package:vpn_agent_app/features/auth/services/auth_service.dart';
 import 'package:vpn_agent_app/features/scaffold/main_scaffold.dart';
-import 'package:vpn_agent_app/shared_widgets/glass_loading_dialog.dart';
+import 'package:vpn_agent_app/core/navigation/app_transitions.dart';
 
 class AuthCheckScreen extends StatefulWidget {
   const AuthCheckScreen({super.key});
@@ -32,8 +32,10 @@ class _AuthCheckScreenState extends State<AuthCheckScreen> {
       debugPrint("Notification init failed (continuing): $e");
     }
 
-    // 2. Loading
-    await Future.delayed(const Duration(seconds: 2));
+    // A two-second sleep used to sit here purely to let the splash be seen.
+    // Startup already does real work — Hive, Firebase, the RemoteConfig fetch,
+    // notification setup — so the splash shows for as long as it needs to and
+    // no longer. Padding it just made every launch two seconds slower.
 
     // 3. Check login status
     print("🔐 Checking Token...");
@@ -47,32 +49,21 @@ class _AuthCheckScreenState extends State<AuthCheckScreen> {
         await NotificationService.registerFcmToken();
         print("📱 FCM Token Registered");
 
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (context) => const MainScaffold()),
-        );
+        Navigator.of(context)
+            .pushReplacement(AppTransitions.fadeThrough(const MainScaffold()));
       } else {
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (context) => const LoginScreen()),
-        );
+        Navigator.of(context)
+            .pushReplacement(AppTransitions.fadeThrough(const LoginScreen()));
       }
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [AppColors.darkBackground, Color(0xFF2C3E50)],
-          ),
-        ),
-        child: const Center(
-          child: GlassLoadingDialog(message: "Starting App..."),
-        ),
-      ),
-    );
+    // Deliberately empty. The Android launch theme already shows the app icon
+    // until Flutter's first frame, and that native splash cannot be skipped —
+    // drawing a second logo here made the icon appear, vanish, and reappear.
+    // A plain background hands over to it seamlessly.
+    return const Scaffold(backgroundColor: AppColors.background);
   }
 }
