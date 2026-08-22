@@ -17,7 +17,6 @@ import 'package:vpn_agent_app/features/dashboard/models/dashboard_model.dart';
 
 import 'package:vpn_agent_app/features/agent_management/screens/agent_list_screen.dart';
 import 'package:vpn_agent_app/features/history/screens/credit_history_screen.dart';
-import 'package:vpn_agent_app/features/history/screens/renewal_requests_screen.dart';
 import 'package:vpn_agent_app/features/notifications/screens/notification_screen.dart';
 import 'package:vpn_agent_app/features/notifications/screens/send_notification_screen.dart';
 import 'package:vpn_agent_app/features/profile/models/payment_method_model.dart';
@@ -175,79 +174,134 @@ class _DashboardViewState extends State<_DashboardView> {
               return const _DashboardSkeleton();
             }
 
-            return RefreshIndicator(
-              onRefresh: _refresh,
-              color: AppColors.accent,
-              backgroundColor: AppColors.surface,
-              child: ListView(
-                padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-                physics: const AlwaysScrollableScrollPhysics(
-                  parent: BouncingScrollPhysics(),
+            return Stack(
+              children: [
+                const _DashboardBackdrop(),
+                RefreshIndicator(
+                  onRefresh: _refresh,
+                  color: AppColors.accent,
+                  backgroundColor: AppColors.surface,
+                  child: ListView(
+                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+                    physics: const AlwaysScrollableScrollPhysics(
+                      parent: BouncingScrollPhysics(),
+                    ),
+                    children: [
+                      if (isStale) ...[
+                        const _StaleStrip(),
+                        const SizedBox(height: 12),
+                      ],
+                      // Sections fade up in sequence on first paint. Keyed to
+                      // _entranceKey, not rebuilt per poll: re-running the
+                      // entrance every 30 seconds would make the page flicker.
+                      _Enter(
+                        key: ValueKey('h$_entranceKey'),
+                        step: 0,
+                        child: _Header(
+                          stats: stats,
+                          onNotifications: () =>
+                              _open(const NotificationScreen()),
+                          onProfile: () => _open(const ProfileScreen()),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      _Enter(
+                        key: ValueKey('t$_entranceKey'),
+                        step: 1,
+                        child: _RequestTicker(
+                          requests: stats.recentRequests,
+                          pendingCount: stats.pendingRequestCount,
+                          onTap: () => _switchTab('Requests'),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      _Enter(
+                        key: ValueKey('b$_entranceKey'),
+                        step: 2,
+                        child: _BalanceCard(
+                          stats: stats,
+                          onHistory: () => _open(const CreditHistoryScreen()),
+                        ),
+                      ),
+                      const SizedBox(height: 24),
+                      const AppSectionHeader(title: 'Your users'),
+                      const SizedBox(height: 12),
+                      _Enter(
+                        key: ValueKey('s$_entranceKey'),
+                        step: 3,
+                        child: _StatsGrid(stats: stats, onSwitch: _switchTab),
+                      ),
+                      const SizedBox(height: 24),
+                      const AppSectionHeader(title: 'Quick actions'),
+                      const SizedBox(height: 12),
+                      _Enter(
+                        key: ValueKey('a$_entranceKey'),
+                        step: 4,
+                        child: _ActionsGrid(
+                          stats: stats,
+                          busyAction: _busyAction,
+                          canAccessChat: _canAccessChat,
+                          canManageAgents: _canManageAgents,
+                          canSendNoti: _canSendNoti,
+                          onOpen: _open,
+                          onPayment: _openPaymentMethods,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-                children: [
-                  if (isStale) ...[
-                    const _StaleStrip(),
-                    const SizedBox(height: 12),
-                  ],
-                  // Sections fade up in sequence on first paint. Keyed to
-                  // _entranceKey, not rebuilt per poll: re-running the
-                  // entrance every 30 seconds would make the page flicker.
-                  _Enter(
-                    key: ValueKey('h$_entranceKey'),
-                    step: 0,
-                    child: _Header(
-                      stats: stats,
-                      onNotifications: () => _open(const NotificationScreen()),
-                      onProfile: () => _open(const ProfileScreen()),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  _Enter(
-                    key: ValueKey('t$_entranceKey'),
-                    step: 1,
-                    child: _RequestTicker(
-                      requests: stats.recentRequests,
-                      pendingCount: stats.pendingRequestCount,
-                      onTap: () => _switchTab('Requests'),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  _Enter(
-                    key: ValueKey('b$_entranceKey'),
-                    step: 2,
-                    child: _BalanceCard(
-                      stats: stats,
-                      onHistory: () => _open(const CreditHistoryScreen()),
-                    ),
-                  ),
-                  const SizedBox(height: 24),
-                  const AppSectionHeader(title: 'Your users'),
-                  const SizedBox(height: 12),
-                  _Enter(
-                    key: ValueKey('s$_entranceKey'),
-                    step: 3,
-                    child: _StatsGrid(stats: stats, onSwitch: _switchTab),
-                  ),
-                  const SizedBox(height: 24),
-                  const AppSectionHeader(title: 'Quick actions'),
-                  const SizedBox(height: 12),
-                  _Enter(
-                    key: ValueKey('a$_entranceKey'),
-                    step: 4,
-                    child: _ActionsGrid(
-                      stats: stats,
-                      busyAction: _busyAction,
-                      canAccessChat: _canAccessChat,
-                      canManageAgents: _canManageAgents,
-                      canSendNoti: _canSendNoti,
-                      onOpen: _open,
-                      onPayment: _openPaymentMethods,
-                    ),
-                  ),
-                ],
-              ),
+              ],
             );
           },
+        ),
+      ),
+    );
+  }
+}
+
+/// Illustration behind the header, above the balance card.
+///
+/// It occupies the band the greeting and the ticker sit in and stops where the
+/// balance panel begins — that panel is solid ink, so artwork running under it
+/// would simply be invisible. Faded upward so it thins out behind the greeting
+/// rather than crowding it.
+class _DashboardBackdrop extends StatelessWidget {
+  const _DashboardBackdrop();
+
+  @override
+  Widget build(BuildContext context) {
+    // Starts under the status bar rather than under SafeArea, so the artwork
+    // reaches up level with the notification and profile buttons instead of
+    // beginning below them.
+    final topInset = MediaQuery.of(context).padding.top;
+
+    return IgnorePointer(
+      child: Padding(
+        padding: EdgeInsets.only(top: topInset),
+        child: Align(
+          alignment: Alignment.topCenter,
+          child: ShaderMask(
+            shaderCallback: (rect) => const LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              // A long, even ramp to nothing. A short one ended in a visible
+              // horizontal edge partway down the artwork, which read as the
+              // image being cut off rather than fading out.
+              stops: [0.0, 0.35, 1.0],
+              colors: [Colors.black, Colors.black87, Colors.transparent],
+            ).createShader(rect),
+            blendMode: BlendMode.dstIn,
+            child: Opacity(
+              opacity: 0.55,
+              child: Image.asset(
+                'assets/images/dashboard_hero.png',
+                width: double.infinity,
+                // contain: the whole artwork, scaled to the width. cover
+                // cropped it to a fixed band and cut through the cards.
+                fit: BoxFit.contain,
+              ),
+            ),
+          ),
         ),
       ),
     );
