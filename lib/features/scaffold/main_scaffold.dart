@@ -17,6 +17,25 @@ import 'package:vpn_agent_app/features/users/screens/user_management_screen.dart
 /// badges read the same numbers the dashboard does. One bloc means one 30s
 /// poll feeding both; providing it per-screen would mean two pollers fetching
 /// the same endpoint.
+/// Lets a screen inside a tab move the shell to a different tab.
+///
+/// The dashboard's stat tiles used to push UserManagementScreen onto the
+/// dashboard's own navigator: the list appeared, but the nav bar still showed
+/// Dashboard as current, and the Users tab held a second, unrelated copy of
+/// the same screen. Switching the shell instead keeps one list, and the
+/// highlighted tab always matches what is on screen.
+class MainShell extends InheritedWidget {
+  final void Function(String tabLabel, {String? userFilter}) goToTab;
+
+  const MainShell({super.key, required this.goToTab, required super.child});
+
+  static MainShell? of(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<MainShell>();
+
+  @override
+  bool updateShouldNotify(MainShell oldWidget) => false;
+}
+
 class MainScaffold extends StatefulWidget {
   const MainScaffold({super.key});
 
@@ -33,6 +52,21 @@ class _MainScaffoldState extends State<MainScaffold> {
   bool _canAccessChat = false;
   bool _permissionsResolved = false;
 
+  /// One Navigator per tab, so a screen pushed from a tab renders inside it
+  /// and the nav bar stays visible. Pushing on the root navigator put the new
+  /// screen over the whole scaffold, hiding the bar, and gave every tab a
+  /// single shared back stack.
+  final _navKeys = <String, GlobalKey<NavigatorState>>{};
+
+  /// Filter the Users tab is showing. The epoch is bumped alongside it so the
+  /// tab's key changes and the screen re-runs initState with the new filter —
+  /// an existing instance would otherwise keep the old one.
+  String _userFilter = 'all';
+  int _userFilterEpoch = 0;
+
+  GlobalKey<NavigatorState> _keyFor(String label) =>
+      _navKeys.putIfAbsent(label, () => GlobalKey<NavigatorState>());
+
   @override
   void initState() {
     super.initState();
@@ -44,7 +78,8 @@ class _MainScaffoldState extends State<MainScaffold> {
       final profile = await ProfileService().getProfile();
       if (!mounted || profile == null) return;
       setState(() {
-        _canAccessChat = profile['can_access_chat'] == true ||
+        _canAccessChat =
+            profile['can_access_chat'] == true ||
             profile['can_access_chat'] == 1 ||
             profile['id'] == 16;
         _permissionsResolved = true;
@@ -55,37 +90,65 @@ class _MainScaffoldState extends State<MainScaffold> {
   }
 
   List<_NavItem> get _items => [
-        const _NavItem(
-          icon: Iconsax.category_2,
-          activeIcon: Iconsax.category_25,
-          label: 'Dashboard',
-          screen: DashboardScreen(),
-        ),
-        const _NavItem(
-          icon: Iconsax.profile_2user,
-          activeIcon: Iconsax.profile_2user5,
-          label: 'Users',
-          screen: UserManagementScreen(),
-        ),
-        const _NavItem(
-          icon: Iconsax.repeat,
-          activeIcon: Iconsax.repeat5,
-          label: 'Requests',
-          screen: RenewalRequestsScreen(),
-          badge: _BadgeSource.pendingRequests,
-        ),
-        if (_canAccessChat)
-          const _NavItem(
-            icon: Iconsax.message_text,
-            activeIcon: Iconsax.message_text_15,
-            label: 'Chat',
-            screen: AgentChatListScreen(),
-            badge: _BadgeSource.unreadChat,
-          ),
-      ];
+    const _NavItem(
+      icon: Iconsax.category_2,
+      activeIcon: Iconsax.category_25,
+      label: 'Dashboard',
+      screen: DashboardScreen(),
+    ),
+    _NavItem(
+      icon: Iconsax.profile_2user,
+      activeIcon: Iconsax.profile_2user5,
+      label: 'Users',
+      screen: UserManagementScreen(
+        key: ValueKey('users-$_userFilter-$_userFilterEpoch'),
+        initialFilter: _userFilter,
+      ),
+    ),
+    const _NavItem(
+      icon: Iconsax.repeat,
+      activeIcon: Iconsax.repeat5,
+      label: 'Requests',
+      screen: RenewalRequestsScreen(),
+      badge: _BadgeSource.pendingRequests,
+    ),
+    if (_canAccessChat)
+      const _NavItem(
+        icon: Iconsax.message_text,
+        activeIcon: Iconsax.message_text_15,
+        label: 'Chat',
+        screen: AgentChatListScreen(),
+        badge: _BadgeSource.unreadChat,
+      ),
+  ];
+
+  void _goToTab(String label, {String? userFilter}) {
+    final index = _items.indexWhere((i) => i.label == label);
+    if (index < 0) return;
+
+    setState(() {
+      if (userFilter != null && userFilter != _userFilter) {
+        _userFilter = userFilter;
+        _userFilterEpoch++;
+      }
+      _selectedIndex = index;
+    });
+
+    // Any detail screen already open in the destination tab is dismissed, so
+    // the agent lands on the list they asked for rather than behind something.
+    final nav = _keyFor(label).currentState;
+    if (nav != null && nav.canPop()) nav.popUntil((r) => r.isFirst);
+  }
 
   void _onTap(int index) {
-    if (index == _selectedIndex) return;
+    // Tapping the tab you are already on returns it to its root. Without
+    // this, a tab holding a pushed screen had no way back to its own list —
+    // the tab button did nothing and the detail screen stayed up.
+    if (index == _selectedIndex) {
+      final nav = _keyFor(_items[index].label).currentState;
+      if (nav != null && nav.canPop()) nav.popUntil((r) => r.isFirst);
+      return;
+    }
     setState(() => _selectedIndex = index);
   }
 
@@ -99,20 +162,52 @@ class _MainScaffoldState extends State<MainScaffold> {
 
     return BlocProvider(
       create: (_) =>
-          DashboardBloc(repository: DashboardRepository())..add(DashboardStarted()),
-      child: Scaffold(
-        backgroundColor: AppColors.background,
-        // IndexedStack, not a rebuild per tab: switching away and back must
-        // not throw away the user list's scroll position or its loaded pages.
-        body: IndexedStack(
-          index: safeIndex,
-          children: items.map((e) => e.screen).toList(),
-        ),
-        bottomNavigationBar: _NavBar(
-          items: items,
-          currentIndex: safeIndex,
-          onTap: _onTap,
-          ready: _permissionsResolved,
+          DashboardBloc(repository: DashboardRepository())
+            ..add(DashboardStarted()),
+      child: MainShell(
+        goToTab: _goToTab,
+        child: PopScope(
+          // Back belongs to the visible tab first. Without this the system back
+          // gesture closed the app from a detail screen instead of returning to
+          // the list behind it.
+          canPop: false,
+          onPopInvokedWithResult: (didPop, _) {
+            if (didPop) return;
+            final nav = _keyFor(items[safeIndex].label).currentState;
+            if (nav != null && nav.canPop()) {
+              nav.pop();
+              return;
+            }
+            if (safeIndex != 0) {
+              setState(() => _selectedIndex = 0);
+              return;
+            }
+            Navigator.of(context, rootNavigator: true).maybePop();
+          },
+          child: Scaffold(
+            backgroundColor: AppColors.background,
+            // IndexedStack, not a rebuild per tab: switching away and back must
+            // not throw away the user list's scroll position or its loaded pages.
+            body: IndexedStack(
+              index: safeIndex,
+              children: [
+                for (final item in items)
+                  Navigator(
+                    key: _keyFor(item.label),
+                    onGenerateRoute: (settings) => MaterialPageRoute(
+                      settings: settings,
+                      builder: (_) => item.screen,
+                    ),
+                  ),
+              ],
+            ),
+            bottomNavigationBar: _NavBar(
+              items: items,
+              currentIndex: safeIndex,
+              onTap: _onTap,
+              ready: _permissionsResolved,
+            ),
+          ),
         ),
       ),
     );
@@ -235,14 +330,20 @@ class _NavButton extends StatelessWidget {
           Stack(
             clipBehavior: Clip.none,
             children: [
-              Icon(selected ? item.activeIcon : item.icon, size: 22, color: color),
+              Icon(
+                selected ? item.activeIcon : item.icon,
+                size: 22,
+                color: color,
+              ),
               if (count > 0)
                 Positioned(
                   top: -5,
                   left: 13,
                   child: Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 5,
+                      vertical: 1,
+                    ),
                     constraints: const BoxConstraints(minWidth: 18),
                     decoration: BoxDecoration(
                       color: AppColors.danger,

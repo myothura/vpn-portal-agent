@@ -21,6 +21,10 @@ class AppCard extends StatelessWidget {
   /// Fill used when [tone] is wash — pass one of the *Wash tokens.
   final Color? washColor;
   final VoidCallback? onTap;
+
+  /// Secondary, destructive-by-convention action. Kept off the surface so a
+  /// list row does not carry a delete control next to its open target.
+  final VoidCallback? onLongPress;
   final bool showBorder;
   final bool showShadow;
 
@@ -40,6 +44,7 @@ class AppCard extends StatelessWidget {
     this.tone = SurfaceTone.plain,
     this.washColor,
     this.onTap,
+    this.onLongPress,
     this.showBorder = true,
     this.showShadow = true,
     this.texture = CardTexture.none,
@@ -108,17 +113,25 @@ class AppCard extends StatelessWidget {
       ),
     );
 
-    if (onTap == null) return card;
+    if (onTap == null && onLongPress == null) return card;
 
     // Material ink ripple rather than a scale animation: it shows WHERE the
     // touch landed, which matters on tiles that sit edge to edge.
     return Material(
       color: Colors.transparent,
       child: InkWell(
-        onTap: () {
-          HapticFeedback.selectionClick();
-          onTap!();
-        },
+        onTap: onTap == null
+            ? null
+            : () {
+                HapticFeedback.selectionClick();
+                onTap!();
+              },
+        onLongPress: onLongPress == null
+            ? null
+            : () {
+                HapticFeedback.mediumImpact();
+                onLongPress!();
+              },
         borderRadius: shape,
         child: card,
       ),

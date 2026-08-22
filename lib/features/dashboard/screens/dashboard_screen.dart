@@ -26,7 +26,7 @@ import 'package:vpn_agent_app/features/profile/screens/profile_screen.dart';
 import 'package:vpn_agent_app/features/profile/services/profile_service.dart';
 import 'package:vpn_agent_app/features/users/screens/add_user_screen.dart';
 import 'package:vpn_agent_app/features/users/screens/device_slot_management_screen.dart';
-import 'package:vpn_agent_app/features/users/screens/user_management_screen.dart';
+import 'package:vpn_agent_app/features/scaffold/main_scaffold.dart';
 import 'package:vpn_agent_app/core/navigation/app_transitions.dart';
 
 class DashboardScreen extends StatelessWidget {
@@ -104,13 +104,24 @@ class _DashboardViewState extends State<_DashboardView> {
     if (mounted) _refresh();
   }
 
+  /// Moves the shell to another tab instead of pushing a screen.
+  ///
+  /// The user and renewal screens are tabs in their own right. Pushing them
+  /// from here left the nav bar highlighting Dashboard while a user list was
+  /// on screen, and created a second copy of a screen the Users tab already
+  /// held.
+  void _switchTab(String label, {String? userFilter}) {
+    MainShell.of(context)?.goToTab(label, userFilter: userFilter);
+  }
+
   Future<void> _openPaymentMethods() async {
     setState(() => _busyAction = 'payment');
     try {
       final profile = await _profileService.getProfile();
       if (!mounted) return;
 
-      final methods = (profile?['payment_details'] as List?)
+      final methods =
+          (profile?['payment_details'] as List?)
               ?.map((e) => PaymentMethod.fromJson(e))
               .toList() ??
           <PaymentMethod>[];
@@ -120,8 +131,9 @@ class _DashboardViewState extends State<_DashboardView> {
     } catch (e) {
       if (!mounted) return;
       setState(() => _busyAction = null);
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text('Could not load payment methods: $e')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not load payment methods: $e')),
+      );
     }
   }
 
@@ -196,7 +208,7 @@ class _DashboardViewState extends State<_DashboardView> {
                     child: _RequestTicker(
                       requests: stats.recentRequests,
                       pendingCount: stats.pendingRequestCount,
-                      onTap: () => _open(const RenewalRequestsScreen()),
+                      onTap: () => _switchTab('Requests'),
                     ),
                   ),
                   const SizedBox(height: 16),
@@ -214,7 +226,7 @@ class _DashboardViewState extends State<_DashboardView> {
                   _Enter(
                     key: ValueKey('s$_entranceKey'),
                     step: 3,
-                    child: _StatsGrid(stats: stats, onOpen: _open),
+                    child: _StatsGrid(stats: stats, onSwitch: _switchTab),
                   ),
                   const SizedBox(height: 24),
                   const AppSectionHeader(title: 'Quick actions'),
@@ -223,13 +235,13 @@ class _DashboardViewState extends State<_DashboardView> {
                     key: ValueKey('a$_entranceKey'),
                     step: 4,
                     child: _ActionsGrid(
-                    stats: stats,
-                    busyAction: _busyAction,
-                    canAccessChat: _canAccessChat,
-                    canManageAgents: _canManageAgents,
-                    canSendNoti: _canSendNoti,
-                    onOpen: _open,
-                    onPayment: _openPaymentMethods,
+                      stats: stats,
+                      busyAction: _busyAction,
+                      canAccessChat: _canAccessChat,
+                      canManageAgents: _canManageAgents,
+                      canSendNoti: _canSendNoti,
+                      onOpen: _open,
+                      onPayment: _openPaymentMethods,
                     ),
                   ),
                 ],
@@ -271,30 +283,30 @@ class _DashboardSkeleton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     Widget tile() => const AppCard(
-          padding: EdgeInsets.all(14),
-          radius: AppTheme.radiusMd,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              AppSkeleton(width: 30, height: 30, radius: 9),
-              SizedBox(height: 12),
-              AppSkeleton(width: 64, height: 26),
-              SizedBox(height: 6),
-              AppSkeleton(width: 88, height: 11),
-            ],
-          ),
-        );
+      padding: EdgeInsets.all(14),
+      radius: AppTheme.radiusMd,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          AppSkeleton(width: 30, height: 30, radius: 9),
+          SizedBox(height: 12),
+          AppSkeleton(width: 64, height: 26),
+          SizedBox(height: 6),
+          AppSkeleton(width: 88, height: 11),
+        ],
+      ),
+    );
 
     Widget row() => IntrinsicHeight(
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Expanded(child: tile()),
-              const SizedBox(width: 12),
-              Expanded(child: tile()),
-            ],
-          ),
-        );
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Expanded(child: tile()),
+          const SizedBox(width: 12),
+          Expanded(child: tile()),
+        ],
+      ),
+    );
 
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
@@ -351,7 +363,11 @@ class _StaleStrip extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Icon(Iconsax.cloud_cross, size: 14, color: AppColors.textTertiary),
+          const Icon(
+            Iconsax.cloud_cross,
+            size: 14,
+            color: AppColors.textTertiary,
+          ),
           const SizedBox(width: 8),
           Expanded(
             child: Text(
@@ -541,7 +557,8 @@ class _BalanceCardState extends State<_BalanceCard> {
   @override
   void initState() {
     super.initState();
-    _hidden = Hive.box('app_cache').get(_hiddenKey, defaultValue: false) as bool;
+    _hidden =
+        Hive.box('app_cache').get(_hiddenKey, defaultValue: false) as bool;
   }
 
   void _toggle() {
@@ -591,8 +608,12 @@ class _BalanceCardState extends State<_BalanceCard> {
                   borderRadius: BorderRadius.circular(999),
                   splashColor: AppColors.textOnInk.withValues(alpha: 0.12),
                   child: Padding(
-                    padding:
-                        const EdgeInsets.only(left: 12, right: 8, top: 6, bottom: 6),
+                    padding: const EdgeInsets.only(
+                      left: 12,
+                      right: 8,
+                      top: 6,
+                      bottom: 6,
+                    ),
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
@@ -698,9 +719,9 @@ class _BalanceCardState extends State<_BalanceCard> {
 
 class _StatsGrid extends StatelessWidget {
   final DashboardStats stats;
-  final Future<void> Function(Widget) onOpen;
+  final void Function(String label, {String? userFilter}) onSwitch;
 
-  const _StatsGrid({required this.stats, required this.onOpen});
+  const _StatsGrid({required this.stats, required this.onSwitch});
 
   @override
   Widget build(BuildContext context) {
@@ -715,8 +736,7 @@ class _StatsGrid extends StatelessWidget {
         color: AppColors.warning,
         wash: AppColors.warningWash,
         emphasis: stats.expiringSoonCount > 0,
-        onTap: () =>
-            onOpen(const UserManagementScreen(initialFilter: 'expiring')),
+        onTap: () => onSwitch('Users', userFilter: 'expiring'),
       ),
       AppStatTile(
         label: 'Active',
@@ -724,7 +744,7 @@ class _StatsGrid extends StatelessWidget {
         icon: Iconsax.tick_circle,
         color: AppColors.success,
         wash: AppColors.successWash,
-        onTap: () => onOpen(const UserManagementScreen(initialFilter: 'active')),
+        onTap: () => onSwitch('Users', userFilter: 'active'),
       ),
       AppStatTile(
         label: 'Total users',
@@ -732,7 +752,7 @@ class _StatsGrid extends StatelessWidget {
         icon: Iconsax.profile_2user,
         color: AppColors.neutral,
         wash: AppColors.neutralWash,
-        onTap: () => onOpen(const UserManagementScreen(initialFilter: 'all')),
+        onTap: () => onSwitch('Users', userFilter: 'all'),
       ),
       AppStatTile(
         label: 'Business',
@@ -740,8 +760,7 @@ class _StatsGrid extends StatelessWidget {
         icon: Iconsax.briefcase,
         color: AppColors.neutral,
         wash: AppColors.neutralWash,
-        onTap: () =>
-            onOpen(const UserManagementScreen(initialFilter: 'business')),
+        onTap: () => onSwitch('Users', userFilter: 'business'),
       ),
     ];
 

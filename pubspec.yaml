@@ -60,6 +60,8 @@ flutter:
   assets:
     - assets/animations/
     - assets/images/
+    # Subdirectories are not implied by the parent entry; each must be listed.
+    - assets/images/avatars/
     # လိုအပ်ရင် ပုံတွေအတွက် path ထပ်ဖြည့်ပါ
     # - assets/images/ 
 

@@ -48,10 +48,16 @@ class VpnUserResponse {
   final int currentPage;
   final int lastPage;
 
+  /// Rows matching the query across every page, not just the ones returned.
+  /// `users.length` is a page — showing it as a count told the agent there
+  /// were 10 accounts expiring when there were 359.
+  final int total;
+
   VpnUserResponse({
     required this.users,
     required this.currentPage,
     required this.lastPage,
+    this.total = 0,
   });
 
   factory VpnUserResponse.fromJson(Map<String, dynamic> json) {
@@ -61,6 +67,7 @@ class VpnUserResponse {
       users: users,
       currentPage: json['current_page'] ?? 1,
       lastPage: json['last_page'] ?? 1,
+      total: json['total'] ?? users.length,
     );
   }
 }

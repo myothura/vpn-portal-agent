@@ -1,255 +1,112 @@
 import 'dart:async';
-import 'dart:ui';
-import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:iconsax/iconsax.dart';
 import 'package:intl/intl.dart';
+
+import 'package:vpn_agent_app/core/navigation/app_transitions.dart';
 import 'package:vpn_agent_app/core/theme/app_colors.dart';
+import 'package:vpn_agent_app/core/theme/app_theme.dart';
+import 'package:vpn_agent_app/shared_widgets/ui/app_surface.dart';
+
 import 'package:vpn_agent_app/features/users/models/vpn_user_model.dart';
 import 'package:vpn_agent_app/features/users/screens/add_user_screen.dart';
 import 'package:vpn_agent_app/features/users/screens/edit_user_screen.dart';
 import 'package:vpn_agent_app/features/users/services/user_management_service.dart';
 
-class LiquidGlassContainer extends StatelessWidget {
-  final Widget child;
-  final double blurSigma;
-  final double opacity;
-  final BorderRadius? borderRadius;
-  final EdgeInsetsGeometry padding;
-  final Color? tintColor;
-  final bool withBorder;
-  final VoidCallback? onTap;
-  final LinearGradient? gradient;
-
-  const LiquidGlassContainer({
-    super.key,
-    required this.child,
-    this.blurSigma = 20.0,
-    this.opacity = 0.08,
-    this.borderRadius,
-    this.padding = EdgeInsets.zero,
-    this.tintColor,
-    this.withBorder = true,
-    this.onTap,
-    this.gradient,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final radius = borderRadius ?? BorderRadius.circular(24);
-    Widget content = ClipRRect(
-      borderRadius: radius,
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: blurSigma, sigmaY: blurSigma),
-        child: Container(
-          padding: padding,
-          decoration: BoxDecoration(
-            color: (tintColor ?? Colors.white).withOpacity(opacity),
-            borderRadius: radius,
-            border: withBorder
-                ? Border.all(color: Colors.white.withOpacity(0.12), width: 1.0)
-                : null,
-            gradient:
-                gradient ??
-                LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [
-                    (tintColor ?? Colors.white).withOpacity(opacity + 0.05),
-                    (tintColor ?? Colors.white).withOpacity(opacity),
-                  ],
-                ),
-          ),
-          child: child,
-        ),
-      ),
-    );
-
-    if (onTap != null) {
-      return GestureDetector(onTap: onTap, child: content);
-    }
-    return content;
-  }
-}
-
-class ScaleButton extends StatefulWidget {
-  final Widget child;
-  final VoidCallback? onTap;
-  final double scaleAmount;
-  const ScaleButton({
-    super.key,
-    required this.child,
-    required this.onTap,
-    this.scaleAmount = 0.95,
-  });
-  @override
-  State<ScaleButton> createState() => _ScaleButtonState();
-}
-
-class _ScaleButtonState extends State<ScaleButton>
-    with SingleTickerProviderStateMixin {
-  late AnimationController _controller;
-  late Animation<double> _scaleAnimation;
-  @override
-  void initState() {
-    super.initState();
-    _controller = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 100),
-    );
-    _scaleAnimation = Tween<double>(
-      begin: 1.0,
-      end: widget.scaleAmount,
-    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeInOut));
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTapDown: (_) => _controller.forward(),
-      onTapUp: (_) {
-        _controller.reverse();
-        widget.onTap?.call();
-        HapticFeedback.lightImpact();
-      },
-      onTapCancel: () => _controller.reverse(),
-      child: ScaleTransition(scale: _scaleAnimation, child: widget.child),
-    );
-  }
-}
-
-class _PulsingDot extends StatefulWidget {
+/// One user's derived state, computed once per card rather than as four
+/// separate untyped map lookups.
+class _Expiry {
+  final String label;
+  final String date;
   final Color color;
-  final double size;
-  const _PulsingDot({required this.color, this.size = 8});
-  @override
-  State<_PulsingDot> createState() => _PulsingDotState();
-}
+  final Color wash;
+  final IconData icon;
 
-class _PulsingDotState extends State<_PulsingDot>
-    with SingleTickerProviderStateMixin {
-  late AnimationController _ctrl;
-  @override
-  void initState() {
-    super.initState();
-    _ctrl = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 1500),
-    )..repeat(reverse: true);
-  }
+  const _Expiry(this.label, this.date, this.color, this.wash, this.icon);
 
-  @override
-  void dispose() {
-    _ctrl.dispose();
-    super.dispose();
-  }
+  static _Expiry of(String? dateStr, String status) {
+    if (status == 'inactive') {
+      return const _Expiry(
+        'Paused',
+        'Inactive',
+        AppColors.neutral,
+        AppColors.neutralWash,
+        Iconsax.pause_circle,
+      );
+    }
+    if (dateStr == null) {
+      return const _Expiry(
+        'Active',
+        'No expiry',
+        AppColors.success,
+        AppColors.successWash,
+        Iconsax.tick_circle,
+      );
+    }
 
-  @override
-  Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: _ctrl,
-      builder: (_, child) {
-        final scale = 1.0 + (_ctrl.value * 0.4);
-        final opacity = 1.0 - (_ctrl.value * 0.5);
-        return SizedBox(
-          width: widget.size * 2.5,
-          height: widget.size * 2.5,
-          child: Center(
-            child: Stack(
-              alignment: Alignment.center,
-              children: [
-                Transform.scale(
-                  scale: scale,
-                  child: Container(
-                    width: widget.size * 1.8,
-                    height: widget.size * 1.8,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: widget.color.withOpacity(0.2 * opacity),
-                    ),
-                  ),
-                ),
-                Container(
-                  width: widget.size,
-                  height: widget.size,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: widget.color,
-                    boxShadow: [
-                      BoxShadow(
-                        color: widget.color.withOpacity(0.5),
-                        blurRadius: 6,
-                        spreadRadius: 1,
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
+    try {
+      final expiry = DateTime.parse(dateStr);
+      final now = DateTime.now();
+      final e = DateTime(expiry.year, expiry.month, expiry.day);
+      final n = DateTime(now.year, now.month, now.day);
+      final days = e.difference(n).inDays;
+      final formatted = DateFormat('dd MMM yyyy').format(expiry);
+
+      if (n.isAfter(e)) {
+        return _Expiry(
+          'Expired',
+          formatted,
+          AppColors.danger,
+          AppColors.dangerWash,
+          Iconsax.close_circle,
         );
-      },
-    );
+      }
+      if (days == 0) {
+        // "0d left" reads like a bug; it means the subscription lapses today.
+        return _Expiry(
+          'Today',
+          formatted,
+          AppColors.danger,
+          AppColors.dangerWash,
+          Iconsax.timer_1,
+        );
+      }
+      if (days <= 7) {
+        return _Expiry(
+          '${days}d left',
+          formatted,
+          AppColors.warning,
+          AppColors.warningWash,
+          Iconsax.timer_1,
+        );
+      }
+      return _Expiry(
+        'Active',
+        formatted,
+        AppColors.success,
+        AppColors.successWash,
+        Iconsax.tick_circle,
+      );
+    } catch (_) {
+      return const _Expiry(
+        'Unknown',
+        'Invalid date',
+        AppColors.neutral,
+        AppColors.neutralWash,
+        Iconsax.warning_2,
+      );
+    }
   }
 }
 
-class _CardEntryAnimation extends StatefulWidget {
-  final Widget child;
-  final int index;
-  const _CardEntryAnimation({required this.child, required this.index});
-  @override
-  State<_CardEntryAnimation> createState() => _CardEntryAnimationState();
-}
+class _FilterOption {
+  final String key;
+  final String label;
+  final IconData icon;
 
-class _CardEntryAnimationState extends State<_CardEntryAnimation>
-    with SingleTickerProviderStateMixin {
-  late AnimationController _ctrl;
-  late Animation<double> _fadeAnim;
-  late Animation<Offset> _slideAnim;
-
-  @override
-  void initState() {
-    super.initState();
-    final delay = math.min(widget.index * 60, 400);
-    _ctrl = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 400),
-    );
-    _fadeAnim = Tween<double>(
-      begin: 0.0,
-      end: 1.0,
-    ).animate(CurvedAnimation(parent: _ctrl, curve: Curves.easeOut));
-    _slideAnim = Tween<Offset>(
-      begin: const Offset(0, 0.08),
-      end: Offset.zero,
-    ).animate(CurvedAnimation(parent: _ctrl, curve: Curves.easeOutCubic));
-
-    Future.delayed(Duration(milliseconds: delay), () {
-      if (mounted) _ctrl.forward();
-    });
-  }
-
-  @override
-  void dispose() {
-    _ctrl.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return FadeTransition(
-      opacity: _fadeAnim,
-      child: SlideTransition(position: _slideAnim, child: widget.child),
-    );
-  }
+  const _FilterOption(this.key, this.label, this.icon);
 }
 
 class UserManagementScreen extends StatefulWidget {
@@ -263,1282 +120,1026 @@ class UserManagementScreen extends StatefulWidget {
 
 class _UserManagementScreenState extends State<UserManagementScreen> {
   final UserManagementService _userService = UserManagementService();
+  final TextEditingController _searchController = TextEditingController();
+  final ScrollController _scrollController = ScrollController();
 
   List<VpnUser> _users = [];
-  final TextEditingController _searchController = TextEditingController();
-
   Timer? _debounce;
-  String _currentSearchQuery = '';
-  late String _currentFilter;
+  String _query = '';
+  late String _filter;
 
   bool _isLoading = true;
   bool _isLoadingMore = false;
-  int _currentPage = 1;
+  int _page = 1;
   int _lastPage = 1;
 
-  static const List<Map<String, dynamic>> _filterOptions = [
-    {
-      'key': 'all',
-      'label': 'All Users',
-      'icon': Iconsax.people,
-      'color': Colors.blueAccent,
-    },
-    {
-      'key': 'active',
-      'label': 'Active',
-      'icon': Iconsax.tick_circle,
-      'color': AppColors.accentGreen,
-    },
-    {
-      'key': 'business',
-      'label': 'Business',
-      'icon': Iconsax.briefcase,
-      'color': Color(0xFFF97316),
-    },
-    {
-      'key': 'expiring',
-      'label': 'Expiring',
-      'icon': Iconsax.timer_1,
-      'color': Colors.orangeAccent,
-    },
+  /// Accounts lapsing within seven days, fetched separately from the main
+  /// list. They cannot be derived from what is on screen: the list is
+  /// paginated and filtered, so an account expiring tomorrow may sit on page
+  /// four — or be excluded entirely by the active filter.
+  List<VpnUser> _urgent = [];
+
+  /// How many accounts are expiring in total. The strip only carries the ten
+  /// most urgent; this is what the badge reports.
+  int _urgentTotal = 0;
+
+  /// Search is opened on demand rather than always occupying a band above the
+  /// list. On a screen whose job is scanning rows, a permanently-visible
+  /// search field costs height every session to serve the minority of them.
+  bool _searchOpen = false;
+  final FocusNode _searchFocus = FocusNode();
+
+  static const _filters = [
+    _FilterOption('all', 'All', Iconsax.profile_2user),
+    _FilterOption('active', 'Active', Iconsax.tick_circle),
+    _FilterOption('expiring', 'Expiring', Iconsax.timer_1),
+    _FilterOption('business', 'Business', Iconsax.briefcase),
   ];
 
   @override
   void initState() {
     super.initState();
-    _currentFilter = widget.initialFilter;
-    _loadUsers(refresh: true);
+    _filter = widget.initialFilter;
     _searchController.addListener(_onSearchChanged);
+    // Pages load as the list reaches its end. The previous screen made the
+    // agent tap a "Load More" button at the bottom of every page — with
+    // thousands of users that is a tap per fifty rows.
+    _scrollController.addListener(_onScroll);
+    _load(refresh: true);
+    _loadUrgent();
   }
 
   @override
   void dispose() {
     _debounce?.cancel();
     _searchController.dispose();
+    _searchFocus.dispose();
+    _scrollController.dispose();
     super.dispose();
   }
 
+  void _onScroll() {
+    if (!_scrollController.hasClients) return;
+    final position = _scrollController.position;
+    // Twelve hundred pixels of runway — roughly eighteen rows. At 400 the
+    // fetch started only as the end came into view, so a fast flick reached
+    // the bottom before it returned and the spinner was on screen for most
+    // of the scroll.
+    if (position.pixels >= position.maxScrollExtent - 1200) _loadMore();
+  }
+
   void _onSearchChanged() {
-    if (_debounce?.isActive ?? false) _debounce!.cancel();
-    _debounce = Timer(const Duration(milliseconds: 500), () {
-      if (_currentSearchQuery != _searchController.text) {
-        setState(() {
-          _currentSearchQuery = _searchController.text;
-        });
-        _loadUsers(refresh: true);
-      }
+    _debounce?.cancel();
+    _debounce = Timer(const Duration(milliseconds: 400), () {
+      if (_query == _searchController.text) return;
+      setState(() => _query = _searchController.text);
+      _load(refresh: true);
     });
   }
 
-  void _onFilterChanged(String filter) {
-    if (_currentFilter == filter) return;
-    HapticFeedback.lightImpact();
-    setState(() {
-      _currentFilter = filter;
-    });
-    _loadUsers(refresh: true);
-  }
+  void _toggleSearch() {
+    HapticFeedback.selectionClick();
+    setState(() => _searchOpen = !_searchOpen);
 
-  Map<String, dynamic> get _activeFilterInfo {
-    return _filterOptions.firstWhere((f) => f['key'] == _currentFilter);
-  }
-
-  String get _screenTitle {
-    switch (_currentFilter) {
-      case 'active':
-        return 'Active Users';
-      case 'business':
-        return 'Business Users';
-      case 'expiring':
-        return 'Expiring Soon';
-      default:
-        return 'User Management';
+    if (_searchOpen) {
+      // After the frame, not during it: the field does not exist yet when
+      // setState returns, so focusing here silently does nothing and the
+      // keyboard never appears.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _searchFocus.requestFocus();
+      });
+      return;
     }
+
+    // Closing clears the query: leaving a hidden filter applied would show a
+    // truncated list with nothing on screen explaining why.
+    _searchFocus.unfocus();
+    if (_searchController.text.isEmpty && _query.isEmpty) return;
+    _searchController.clear();
+    setState(() => _query = '');
+    _load(refresh: true);
   }
 
-  Future<void> _loadUsers({bool refresh = false}) async {
+  void _onFilterChanged(String key) {
+    if (_filter == key) return;
+    HapticFeedback.selectionClick();
+    setState(() => _filter = key);
+    _load(refresh: true);
+  }
+
+  Future<void> _load({bool refresh = false}) async {
     if (refresh) {
       setState(() {
         _isLoading = true;
-        _currentPage = 1;
-        _users.clear();
+        _page = 1;
+        _users = [];
       });
     }
 
     final response = await _userService.getVpnUsers(
-      page: _currentPage,
-      search: _currentSearchQuery,
-      filter: _currentFilter,
+      page: _page,
+      search: _query,
+      filter: _filter,
     );
+    if (!mounted) return;
 
-    if (mounted) {
-      setState(() {
-        if (response != null) {
-          if (refresh) {
-            _users = response.users;
-          } else {
-            _users.addAll(response.users);
-          }
-          _lastPage = response.lastPage;
-          _sortUsers();
-        }
-        _isLoading = false;
-        _isLoadingMore = false;
-      });
-    }
-  }
-
-  Future<void> _loadMoreUsers() async {
-    if (_isLoadingMore || _currentPage >= _lastPage) return;
-    setState(() => _isLoadingMore = true);
-    _currentPage++;
-    await _loadUsers(refresh: false);
-  }
-
-  void _sortUsers() {
-    _users.sort((a, b) {
-      if (a.expiryDate == null) return 1;
-      if (b.expiryDate == null) return -1;
-      DateTime dateA = DateTime.parse(a.expiryDate!);
-      DateTime dateB = DateTime.parse(b.expiryDate!);
-      return dateA.compareTo(dateB);
+    setState(() {
+      if (response != null) {
+        // Appended in server order, never re-sorted. Sorting the accumulated
+        // list on every page meant page two's rows interleaved into page one,
+        // so everything already on screen shifted position mid-scroll and the
+        // viewport jumped — which looked like the list resetting to the top.
+        // Ordering is the server's job; it has all the rows, this has a page.
+        _users = refresh ? response.users : [..._users, ...response.users];
+        _lastPage = response.lastPage;
+      }
+      _isLoading = false;
+      _isLoadingMore = false;
     });
   }
 
-  Map<String, dynamic> _getExpiryStatus(String? dateStr, String status) {
-    if (status == 'inactive') {
-      return {
-        'status_text': 'Inactive',
-        'date_text': 'Paused',
-        'color': Colors.grey,
-        'icon': Iconsax.forbidden_2,
-      };
-    }
-
-    if (dateStr == null) {
-      return {
-        'status_text': 'Active',
-        'date_text': 'No Expiry',
-        'color': AppColors.accentGreen,
-        'icon': Iconsax.tick_circle,
-      };
-    }
-
-    try {
-      final expiryDate = DateTime.parse(dateStr);
-      final now = DateTime.now();
-      final dateOnlyExpiry = DateTime(
-        expiryDate.year,
-        expiryDate.month,
-        expiryDate.day,
-      );
-      final dateOnlyNow = DateTime(now.year, now.month, now.day);
-      final isExpired = dateOnlyNow.isAfter(dateOnlyExpiry);
-      final daysRemaining = dateOnlyExpiry.difference(dateOnlyNow).inDays;
-      final formattedDate = DateFormat('dd MMM yyyy').format(expiryDate);
-
-      if (isExpired) {
-        return {
-          'status_text': 'Expired',
-          'date_text': formattedDate,
-          'color': Colors.redAccent,
-          'icon': Iconsax.close_circle,
-        };
-      } else if (daysRemaining <= 7) {
-        return {
-          'status_text': '${daysRemaining}d left',
-          'date_text': formattedDate,
-          'color': Colors.orangeAccent,
-          'icon': Iconsax.timer_1,
-        };
-      } else {
-        return {
-          'status_text': 'Active',
-          'date_text': formattedDate,
-          'color': AppColors.accentGreen,
-          'icon': Iconsax.tick_circle,
-        };
-      }
-    } catch (e) {
-      return {
-        'status_text': 'Error',
-        'date_text': 'Invalid',
-        'color': Colors.grey,
-        'icon': Iconsax.warning_2,
-      };
-    }
+  Future<void> _loadUrgent() async {
+    final response = await _userService.getVpnUsers(
+      page: 1,
+      filter: 'expiring',
+    );
+    if (!mounted || response == null) return;
+    setState(() {
+      _urgent = response.users.take(10).toList();
+      _urgentTotal = response.total;
+    });
   }
 
-  Color _getPlanColor(String? planName) {
-    if (planName == null) return Colors.white;
-    final name = planName.toLowerCase();
-    if (name.contains('gold')) return const Color(0xFFFFD700);
-    if (name.contains('vip') || name.contains('premium'))
-      return const Color(0xFFBF5AF2);
-    if (name.contains('silver') || name.contains('basic'))
-      return const Color(0xFFACCEF7);
-    if (name.contains('private')) return const Color(0xFFFF2D55);
-    return Colors.white;
+  /// Reloads the list AND the urgent strip together.
+  ///
+  /// They come from separate requests, so refreshing only the list left the
+  /// strip asserting an account expires today after the agent had just
+  /// renewed it — and its badge counting rows that no longer exist.
+  Future<void> _refreshAll() async {
+    await Future.wait([_load(refresh: true), _loadUrgent()]);
   }
 
-  void _showGlassDeleteConfirm(VpnUser user) {
-    showDialog(
+  Future<void> _loadMore() async {
+    if (_isLoadingMore || _isLoading || _page >= _lastPage) return;
+    setState(() => _isLoadingMore = true);
+    _page++;
+    await _load();
+  }
+
+  Future<void> _openUser(VpnUser user) async {
+    final changed = await Navigator.push(
+      context,
+      AppTransitions.slide(EditUserScreen(user: user)),
+    );
+    if (changed == true) _refreshAll();
+  }
+
+  Future<void> _addUser() async {
+    final created = await Navigator.push(
+      context,
+      AppTransitions.slide(const AddUserScreen()),
+    );
+    if (created == true) _refreshAll();
+  }
+
+  Future<void> _confirmDelete(VpnUser user) async {
+    final confirmed = await showDialog<bool>(
       context: context,
-      builder: (ctx) => BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
-        child: Dialog(
-          backgroundColor: Colors.transparent,
-          insetPadding: const EdgeInsets.all(20),
-          child: LiquidGlassContainer(
-            borderRadius: BorderRadius.circular(28),
-            padding: const EdgeInsets.all(24),
-            opacity: 0.15,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: Colors.redAccent.withOpacity(0.15),
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Icon(
-                    Iconsax.trash,
-                    color: Colors.redAccent,
-                    size: 32,
-                  ),
-                ),
-                const SizedBox(height: 20),
-                Text(
-                  "Delete User?",
-                  style: GoogleFonts.exo2(
-                    color: Colors.white,
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  "This action cannot be undone.\nRemove '${user.username}'?",
-                  style: GoogleFonts.ibmPlexSans(
-                    color: Colors.white70,
-                    fontSize: 14,
-                    height: 1.5,
-                  ),
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 28),
-                Row(
-                  children: [
-                    Expanded(
-                      child: ScaleButton(
-                        onTap: () => Navigator.pop(ctx),
-                        child: Container(
-                          height: 50,
-                          decoration: BoxDecoration(
-                            color: Colors.white.withOpacity(0.08),
-                            borderRadius: BorderRadius.circular(16),
-                          ),
-                          child: Center(
-                            child: Text(
-                              "Cancel",
-                              style: GoogleFonts.ibmPlexSans(
-                                color: Colors.white70,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 16),
-                    Expanded(
-                      child: ScaleButton(
-                        onTap: () async {
-                          Navigator.pop(ctx);
-                          final success = await _userService.deleteUser(
-                            user.id,
-                          );
-                          if (success) {
-                            _loadUsers(refresh: true);
-                            if (mounted) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  content: Text("User deleted successfully"),
-                                  backgroundColor: AppColors.accentGreen,
-                                ),
-                              );
-                            }
-                          }
-                        },
-                        child: Container(
-                          height: 50,
-                          decoration: BoxDecoration(
-                            color: Colors.redAccent.withOpacity(0.2),
-                            borderRadius: BorderRadius.circular(16),
-                            border: Border.all(
-                              color: Colors.redAccent.withOpacity(0.5),
-                            ),
-                          ),
-                          child: Center(
-                            child: Text(
-                              "Delete",
-                              style: GoogleFonts.ibmPlexSans(
-                                color: Colors.white,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
+      builder: (ctx) => AlertDialog(
+        icon: const AppIconBadge(
+          icon: Iconsax.trash,
+          color: AppColors.danger,
+          background: AppColors.dangerWash,
+          size: 22,
+          padding: 12,
         ),
+        title: const Text('Remove this user?'),
+        content: Text(
+          "'${user.username}' will lose access immediately. This cannot be undone.",
+          style: Theme.of(ctx).textTheme.bodyMedium,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: AppColors.danger),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Remove'),
+          ),
+        ],
       ),
     );
+
+    if (confirmed != true) return;
+
+    final ok = await _userService.deleteUser(user.id);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(ok ? 'User removed' : 'Could not remove user')),
+    );
+    if (ok) _refreshAll();
   }
 
   @override
   Widget build(BuildContext context) {
-    final Color filterColor = _activeFilterInfo['color'];
-    final onlineCount = _users.where((u) => u.isOnline).length;
-    final businessCount = _users.where((u) => u.hasBusinessPlan).length;
-
     return Scaffold(
-      backgroundColor: AppColors.darkBackground,
-      extendBodyBehindAppBar: true,
-      appBar: AppBar(
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        centerTitle: true,
-        title: AnimatedSwitcher(
-          duration: const Duration(milliseconds: 300),
-          child: Text(
-            _screenTitle,
-            key: ValueKey(_screenTitle),
-            style: GoogleFonts.exo2(
-              color: Colors.white,
-              fontWeight: FontWeight.bold,
-              fontSize: 18,
-              letterSpacing: 1.0,
+      backgroundColor: AppColors.background,
+      // No app bar. The title only restated the tab already highlighted in
+      // the nav, and the online count duplicated the dashboard's — both cost
+      // a band of height above a screen whose job is scanning a long list.
+      // The list is white; without this the controls above it floated on the
+      // same page background as the rest of the app and the two areas ran
+      // together. A tinted, textured band separates "tools" from "content".
+      body: SafeArea(
+        bottom: false,
+        // minimum adds breathing room under the status bar: SafeArea alone
+        // stops content overlapping it, it does not separate them.
+        minimum: const EdgeInsets.only(top: 8),
+        child: Column(
+          children: [
+            AnimatedSize(
+              duration: const Duration(milliseconds: 200),
+              curve: Curves.easeOutCubic,
+              alignment: Alignment.topCenter,
+              child: !_searchOpen
+                  ? const SizedBox(width: double.infinity)
+                  : Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 4, 16, 10),
+                      child: TextField(
+                        controller: _searchController,
+                        textInputAction: TextInputAction.search,
+                        style: Theme.of(context).textTheme.bodyLarge,
+                        decoration: InputDecoration(
+                          hintText: 'Search by username',
+                          // Overrides the theme's form-field metrics locally. Those
+                          // are sized for a login page where a field is the focus; a
+                          // search bar is a control above a list and should not take
+                          // a form field's height.
+                          isDense: true,
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 14,
+                            vertical: 10,
+                          ),
+                          prefixIconConstraints: const BoxConstraints(
+                            minWidth: 38,
+                            minHeight: 38,
+                          ),
+                          prefixIcon: const Icon(
+                            Iconsax.search_normal_1,
+                            size: 17,
+                            color: AppColors.textTertiary,
+                          ),
+                          suffixIcon: _searchController.text.isEmpty
+                              ? IconButton(
+                                  icon: const Icon(
+                                    Iconsax.close_circle,
+                                    size: 18,
+                                    color: AppColors.textTertiary,
+                                  ),
+                                  onPressed: _toggleSearch,
+                                )
+                              : IconButton(
+                                  icon: const Icon(
+                                    Iconsax.close_circle,
+                                    size: 18,
+                                    color: AppColors.textTertiary,
+                                  ),
+                                  onPressed: () {
+                                    _searchController.clear();
+                                    setState(() => _query = '');
+                                    _load(refresh: true);
+                                  },
+                                ),
+                        ),
+                      ),
+                    ),
             ),
-          ),
+            // Hidden when the expiring filter is active (the whole list is
+            // already that set) and while search is open (the results are
+            // what the agent is looking at, not this).
+            if (_urgent.isNotEmpty &&
+                _query.isEmpty &&
+                !_searchOpen &&
+                _filter != 'expiring')
+              _UrgentStrip(
+                users: _urgent,
+                total: _urgentTotal,
+                onTap: _openUser,
+                onSeeAll: () => _onFilterChanged('expiring'),
+              ),
+            SizedBox(
+              height: 36,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                clipBehavior: Clip.none,
+                itemCount: _filters.length,
+                separatorBuilder: (_, __) => const SizedBox(width: 8),
+                itemBuilder: (context, i) {
+                  final f = _filters[i];
+                  final selected = _filter == f.key;
+                  return _FilterChip(
+                    label: f.label,
+                    icon: f.icon,
+                    selected: selected,
+                    onTap: () => _onFilterChanged(f.key),
+                  );
+                },
+              ),
+            ),
+            const SizedBox(height: 10),
+            Expanded(
+              child: _isLoading
+                  ? const _ListSkeleton()
+                  : _users.isEmpty
+                  ? _buildEmpty()
+                  : RefreshIndicator(
+                      onRefresh: _refreshAll,
+                      color: AppColors.accent,
+                      backgroundColor: AppColors.surface,
+                      // Rows separated by hairlines on a single surface
+                      // rather than a card each: a card per user spent 10px
+                      // of gap and a border on every row and fitted five to
+                      // a screen. This fits nine.
+                      // One Material for the whole list, and a fixed
+                      // itemExtent. Row height never varies — avatar 44 plus
+                      // 20 of padding plus the divider — so telling the
+                      // viewport that up front lets it skip a layout pass
+                      // per row while scrolling, which is where the
+                      // jank came from on long lists.
+                      child: Material(
+                        color: AppColors.surface,
+                        child: ListView.builder(
+                          controller: _scrollController,
+                          padding: const EdgeInsets.only(top: 8, bottom: 96),
+                          physics: const AlwaysScrollableScrollPhysics(
+                            parent: BouncingScrollPhysics(),
+                          ),
+                          itemExtent: _UserRow.heightFor(context),
+                          itemCount: _users.length + 1,
+                          itemBuilder: (context, i) {
+                            if (i == _users.length) return _buildFooter();
+                            final user = _users[i];
+                            return _UserRow(
+                              key: ValueKey(user.id),
+                              user: user,
+                              onTap: () => _openUser(user),
+                              onDelete: () => _confirmDelete(user),
+                              showDivider: i < _users.length - 1,
+                            );
+                          },
+                        ),
+                      ),
+                    ),
+            ),
+          ],
         ),
-        leading: IconButton(
-          icon: Container(
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.05),
-              shape: BoxShape.circle,
+      ),
+      floatingActionButton: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Search above add, both within thumb reach. Search is a mode
+          // toggle rather than a primary action, so it is the smaller,
+          // surface-coloured button of the pair.
+          FloatingActionButton.small(
+            heroTag: 'search',
+            onPressed: _toggleSearch,
+            backgroundColor: AppColors.surface,
+            foregroundColor: _searchOpen
+                ? AppColors.accentInk
+                : AppColors.textSecondary,
+            elevation: 2,
+            shape: const CircleBorder(
+              side: BorderSide(color: AppColors.border),
             ),
-            child: const Icon(
-              Iconsax.arrow_left_2,
-              color: Colors.white,
+            child: Icon(
+              _searchOpen ? Iconsax.close_circle : Iconsax.search_normal_1,
               size: 20,
             ),
           ),
-          onPressed: () => Navigator.pop(context),
-        ),
-        actions: [
-          if (onlineCount > 0)
-            Padding(
-              padding: const EdgeInsets.only(right: 6),
-              child: Center(
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 8,
-                    vertical: 5,
-                  ),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF22D3EE).withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(
-                      color: const Color(0xFF22D3EE).withOpacity(0.2),
-                    ),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Container(
-                        width: 6,
-                        height: 6,
-                        decoration: const BoxDecoration(
-                          color: Color(0xFF22D3EE),
-                          shape: BoxShape.circle,
-                        ),
-                      ),
-                      const SizedBox(width: 5),
-                      Text(
-                        "$onlineCount",
-                        style: GoogleFonts.spaceMono(
-                          color: const Color(0xFF22D3EE),
-                          fontSize: 11,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          Padding(
-            padding: const EdgeInsets.only(right: 16),
-            child: Center(
-              child: LiquidGlassContainer(
-                borderRadius: BorderRadius.circular(12),
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 6,
-                ),
-                opacity: 0.1,
-                child: Row(
-                  children: [
-                    Icon(Iconsax.people, size: 14, color: filterColor),
-                    const SizedBox(width: 6),
-                    Text(
-                      "${_users.length}",
-                      style: GoogleFonts.spaceMono(
-                        color: Colors.white,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 12,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
+          const SizedBox(height: 12),
+          FloatingActionButton(
+            heroTag: 'add',
+            onPressed: _addUser,
+            backgroundColor: AppColors.accent,
+            foregroundColor: AppColors.textOnAccent,
+            shape: const CircleBorder(),
+            child: const Icon(Iconsax.add, size: 26),
           ),
         ],
       ),
-      body: Stack(
-        children: [
-          Positioned.fill(
-            child: Container(
-              decoration: const BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  colors: [Color(0xFF0F0F10), Color(0xFF18181C)],
-                ),
-              ),
-            ),
-          ),
-          SafeArea(
-            child: Column(
-              children: [
-                const SizedBox(height: 8),
-                _buildFilterChips(),
-                if (!_isLoading && _users.isNotEmpty)
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(20, 10, 20, 0),
-                    child: _buildMiniStats(onlineCount, businessCount),
-                  ),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 10, 20, 4),
-                  child: LiquidGlassContainer(
-                    borderRadius: BorderRadius.circular(20),
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                    opacity: 0.06,
-                    child: SizedBox(
-                      height: 48,
-                      child: Row(
-                        children: [
-                          Icon(
-                            Iconsax.search_normal,
-                            color: Colors.white.withOpacity(0.35),
-                            size: 18,
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: TextField(
-                              controller: _searchController,
-                              style: GoogleFonts.ibmPlexSans(
-                                color: Colors.white,
-                                fontSize: 14,
-                              ),
-                              cursorColor: filterColor,
-                              decoration: InputDecoration(
-                                hintText: "Search user by name...",
-                                hintStyle: GoogleFonts.ibmPlexSans(
-                                  color: Colors.white.withOpacity(0.25),
-                                  fontSize: 13,
-                                ),
-                                border: InputBorder.none,
-                                contentPadding: const EdgeInsets.only(
-                                  bottom: 2,
-                                ),
-                              ),
-                            ),
-                          ),
-                          if (_searchController.text.isNotEmpty)
-                            ScaleButton(
-                              onTap: () {
-                                _searchController.clear();
-                                setState(() => _currentSearchQuery = '');
-                                _loadUsers(refresh: true);
-                              },
-                              child: Icon(
-                                Iconsax.close_circle,
-                                size: 18,
-                                color: Colors.white.withOpacity(0.4),
-                              ),
-                            ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Expanded(
-                  child: _isLoading
-                      ? _buildShimmerLoading()
-                      : _users.isEmpty
-                      ? _buildEmptyState()
-                      : RefreshIndicator(
-                          onRefresh: () async => _loadUsers(refresh: true),
-                          color: filterColor,
-                          backgroundColor: const Color(0xFF2C2C2E),
-                          child: ListView.builder(
-                            padding: const EdgeInsets.fromLTRB(20, 4, 20, 100),
-                            physics: const BouncingScrollPhysics(
-                              parent: AlwaysScrollableScrollPhysics(),
-                            ),
-                            itemCount: _users.length + 1,
-                            itemBuilder: (context, index) {
-                              if (index == _users.length) {
-                                if (_currentPage < _lastPage) {
-                                  return _buildLoadMoreButton();
-                                }
-                                return _buildPageIndicator();
-                              }
-                              return _CardEntryAnimation(
-                                index: index,
-                                child: _buildGlassUserCard(_users[index]),
-                              );
-                            },
-                          ),
-                        ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-      floatingActionButton: ScaleButton(
-        onTap: () async {
-          final result = await Navigator.push(
-            context,
-            MaterialPageRoute(builder: (_) => const AddUserScreen()),
-          );
-          if (result == true) _loadUsers(refresh: true);
-        },
-        child: LiquidGlassContainer(
-          borderRadius: BorderRadius.circular(30),
-          padding: const EdgeInsets.all(16),
-          gradient: const LinearGradient(
-            colors: [AppColors.accentGreen, Color(0xFF00CC88)],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          ),
-          child: const Icon(Iconsax.add, color: Colors.white, size: 28),
+    );
+  }
+
+  Widget _buildFooter() {
+    if (_isLoadingMore) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 20),
+        child: AppLoader(compact: true),
+      );
+    }
+    if (_page < _lastPage) return const SizedBox(height: 20);
+    return Padding(
+      padding: const EdgeInsets.only(top: 16),
+      child: Center(
+        child: Text(
+          '${_users.length} users',
+          style: Theme.of(context).textTheme.bodySmall,
         ),
       ),
     );
   }
 
-  Widget _buildMiniStats(int onlineCount, int businessCount) {
-    return Row(
+  Widget _buildEmpty() {
+    if (_query.isNotEmpty) {
+      return AppEmptyState(
+        icon: Iconsax.search_status,
+        title: 'No match for "$_query"',
+        subtitle: 'Check the spelling or try part of the name.',
+      );
+    }
+    if (_filter != 'all') {
+      return AppEmptyState(
+        icon: Iconsax.filter,
+        title: 'No users in this filter',
+        actionLabel: 'Show all users',
+        onAction: () => _onFilterChanged('all'),
+      );
+    }
+    return AppEmptyState(
+      icon: Iconsax.profile_2user,
+      title: 'No users yet',
+      subtitle: 'Add your first user to get started.',
+      actionLabel: 'Add user',
+      onAction: _addUser,
+    );
+  }
+}
+
+// ── Row ───────────────────────────────────────────────────────────────────
+
+class _UserRow extends StatelessWidget {
+  /// Row height, used as the list's itemExtent.
+  ///
+  /// Derived from the device's text scale rather than fixed. A constant 65
+  /// held only at the default scale: raise the system font size and the two
+  /// stacked text lines outgrew the box, which is what overflowed. The avatar
+  /// sets the floor; text taller than it pushes the row instead.
+  static double heightFor(BuildContext context) {
+    final scaler = MediaQuery.textScalerOf(context);
+    // 14pt title + 3 gap + 12pt caption, each at roughly 1.35 line height.
+    final textBlock = scaler.scale(14) * 1.35 + 3 + scaler.scale(12) * 1.35;
+    const avatar = 44.0;
+    const verticalPadding = 19.0; // 10 top + 9 bottom
+    const divider = 1.0;
+    return (textBlock > avatar ? textBlock : avatar) +
+        verticalPadding +
+        divider;
+  }
+
+  final VpnUser user;
+  final VoidCallback onTap;
+  final VoidCallback onDelete;
+  final bool showDivider;
+
+  const _UserRow({
+    super.key,
+    required this.user,
+    required this.onTap,
+    required this.onDelete,
+    this.showDivider = true,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = Theme.of(context).textTheme;
+    final expiry = _Expiry.of(user.expiryDate, user.status);
+    final isBusiness = user.hasBusinessPlan;
+
+    // No Material here — the list provides one. A Material per row means an
+    // extra render layer for every visible item.
+    final Widget row = InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 10, 12, 9),
+        child: Row(
+          children: [
+            _Avatar(
+              username: user.username,
+              isBusiness: isBusiness,
+              isOnline: user.isOnline,
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          user.username,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: t.titleMedium?.copyWith(fontSize: 14),
+                        ),
+                      ),
+                      if (isBusiness) ...[
+                        const SizedBox(width: 6),
+                        const _MiniTag(
+                          label: 'BIZ',
+                          color: AppColors.orange,
+                          background: AppColors.orangeWash,
+                        ),
+                      ],
+                      if (user.extraDeviceSlots > 0) ...[
+                        const SizedBox(width: 5),
+                        _MiniTag(
+                          label: '+${user.extraDeviceSlots}',
+                          color: AppColors.info,
+                          background: AppColors.infoWash,
+                        ),
+                      ],
+                    ],
+                  ),
+                  const SizedBox(height: 3),
+                  Row(
+                    children: [
+                      Text(
+                        expiry.label,
+                        style: t.bodySmall?.copyWith(
+                          color: expiry.color,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      Text(' · ', style: t.bodySmall),
+                      Flexible(
+                        child: Text(
+                          user.planName ?? 'No plan',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: t.bodySmall,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            // Date on the right, as the reference puts the timestamp:
+            // scannable as a column rather than buried mid-sentence.
+            Text(
+              expiry.date,
+              style: t.bodySmall?.copyWith(color: AppColors.textTertiary),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    // Swipe to remove, in place of the long-press it replaces: a long-press
+    // is invisible until someone happens to try it, whereas a swipe reveals
+    // its own affordance the moment a finger moves sideways.
+    //
+    // confirmDismiss always returns false. The row is never removed by the
+    // gesture itself — the delete call reloads the list, and letting
+    // Dismissible also drop it would assert on the next build when the item
+    // count had not yet changed.
+    final dismissible = Dismissible(
+      key: ValueKey('dismiss-${user.id}'),
+      // Both directions: an agent reaching one-handed swipes whichever way
+      // their thumb naturally travels, and having only one work reads as the
+      // gesture being broken.
+      direction: DismissDirection.horizontal,
+      confirmDismiss: (_) async {
+        onDelete();
+        return false;
+      },
+      // background is what shows on a left-to-right swipe, secondaryBackground
+      // on right-to-left; the label hugs the edge the row is pulling away
+      // from so it appears from under the finger.
+      background: const _SwipeAction(alignment: Alignment.centerLeft),
+      secondaryBackground: const _SwipeAction(alignment: Alignment.centerRight),
+      child: row,
+    );
+
+    // The divider belongs to the row, not to a separatorBuilder: with a fixed
+    // itemExtent the list has no separate slot to put one in.
+    return Column(
+      mainAxisSize: MainAxisSize.min,
       children: [
-        if (onlineCount > 0) ...[
-          _buildMiniStatChip("Online", "$onlineCount", const Color(0xFF22D3EE)),
-          const SizedBox(width: 8),
-        ],
-        if (businessCount > 0) ...[
-          _buildMiniStatChip(
-            "Business",
-            "$businessCount",
-            const Color(0xFFF97316),
-          ),
-          const SizedBox(width: 8),
-        ],
-        if (_lastPage > 1)
-          _buildMiniStatChip(
-            "Page",
-            "$_currentPage/$_lastPage",
-            Colors.white.withOpacity(0.6),
-          ),
+        Expanded(child: dismissible),
+        if (showDivider)
+          const Padding(
+            padding: EdgeInsets.only(left: 68),
+            child: Divider(height: 1),
+          )
+        else
+          const SizedBox(height: 1),
       ],
     );
   }
+}
 
-  Widget _buildMiniStatChip(String label, String value, Color color) {
-    return LiquidGlassContainer(
-      borderRadius: BorderRadius.circular(10),
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-      opacity: 0.04,
-      withBorder: false,
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 6,
-            height: 6,
-            decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-          ),
-          const SizedBox(width: 7),
-          Text(
-            label,
-            style: GoogleFonts.ibmPlexSans(
-              color: Colors.white.withOpacity(0.35),
-              fontSize: 10,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          const SizedBox(width: 5),
-          Text(
-            value,
-            style: GoogleFonts.spaceMono(
-              color: Colors.white.withOpacity(0.8),
-              fontSize: 11,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+/// Accounts lapsing within the week, pinned above the list.
+///
+/// These are the rows that cost the agent money if missed, and paging through
+/// a filtered list to find them defeats the point. Horizontal, so it costs one
+/// band of height however many there are.
+class _UrgentStrip extends StatelessWidget {
+  final List<VpnUser> users;
+  final int total;
+  final ValueChanged<VpnUser> onTap;
+  final VoidCallback onSeeAll;
 
-  Widget _buildFilterChips() {
+  const _UrgentStrip({
+    required this.users,
+    required this.total,
+    required this.onTap,
+    required this.onSeeAll,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = Theme.of(context).textTheme;
+
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 20),
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        physics: const BouncingScrollPhysics(),
-        child: Row(
-          children: _filterOptions.map((option) {
-            final String key = option['key'];
-            final String label = option['label'];
-            final IconData icon = option['icon'];
-            final Color color = option['color'];
-            final bool isSelected = _currentFilter == key;
-
-            return Padding(
-              padding: const EdgeInsets.only(right: 8),
-              child: ScaleButton(
-                onTap: () => _onFilterChanged(key),
-                scaleAmount: 0.95,
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 250),
-                  curve: Curves.easeOutCubic,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 14,
-                    vertical: 10,
-                  ),
-                  decoration: BoxDecoration(
-                    color: isSelected
-                        ? color.withOpacity(0.18)
-                        : Colors.white.withOpacity(0.03),
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(
-                      color: isSelected
-                          ? color.withOpacity(0.5)
-                          : Colors.white.withOpacity(0.06),
-                      width: isSelected ? 1.5 : 1.0,
-                    ),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        icon,
-                        size: 14,
-                        color: isSelected
-                            ? color
-                            : Colors.white.withOpacity(0.3),
-                      ),
-                      const SizedBox(width: 7),
-                      Text(
-                        label,
-                        style: GoogleFonts.ibmPlexSans(
-                          color: isSelected
-                              ? color
-                              : Colors.white.withOpacity(0.45),
-                          fontSize: 12,
-                          fontWeight: isSelected
-                              ? FontWeight.bold
-                              : FontWeight.w500,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            );
-          }).toList(),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildShimmerLoading() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 20),
-      child: Column(
-        children: List.generate(5, (i) {
-          return Padding(
-            padding: const EdgeInsets.only(bottom: 12),
-            child: LiquidGlassContainer(
-              borderRadius: BorderRadius.circular(20),
-              opacity: 0.04,
-              padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.fromLTRB(16, 6, 16, 14),
+      child: AppCard(
+        tone: SurfaceTone.wash,
+        washColor: AppColors.warningWash,
+        // Warm tint and a texture so the band reads as an alert against the
+        // white rows below rather than another section of the list.
+        texture: CardTexture.glow,
+        textureColor: AppColors.warning,
+        showShadow: false,
+        radius: AppTheme.radiusLg,
+        // No horizontal padding: the avatar row runs to the card's own edges,
+        // so a scrolled avatar is clipped by the card boundary rather than
+        // vanishing at an inset line inside it. The header and the list each
+        // re-add their own inset.
+        padding: const EdgeInsets.fromLTRB(0, 12, 0, 14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 14),
               child: Row(
                 children: [
-                  Container(
-                    width: 48,
-                    height: 48,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: Colors.white.withOpacity(0.04),
-                    ),
+                  const Icon(
+                    Iconsax.timer_1,
+                    size: 15,
+                    color: AppColors.warning,
                   ),
-                  const SizedBox(width: 14),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Container(
-                          height: 14,
-                          width: 120,
-                          decoration: BoxDecoration(
-                            color: Colors.white.withOpacity(0.04),
-                            borderRadius: BorderRadius.circular(4),
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        Container(
-                          height: 10,
-                          width: 80,
-                          decoration: BoxDecoration(
-                            color: Colors.white.withOpacity(0.03),
-                            borderRadius: BorderRadius.circular(4),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  Container(
-                    height: 28,
-                    width: 60,
-                    decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.03),
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          );
-        }),
-      ),
-    );
-  }
-
-  Widget _buildEmptyState() {
-    final Color filterColor = _activeFilterInfo['color'];
-    final IconData filterIcon = _activeFilterInfo['icon'];
-    final String filterLabel = _activeFilterInfo['label'];
-
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Container(
-            padding: const EdgeInsets.all(28),
-            decoration: BoxDecoration(
-              color: filterColor.withOpacity(0.05),
-              shape: BoxShape.circle,
-              border: Border.all(color: filterColor.withOpacity(0.08)),
-            ),
-            child: Icon(
-              _currentSearchQuery.isEmpty ? filterIcon : Iconsax.search_status,
-              size: 44,
-              color: filterColor.withOpacity(0.3),
-            ),
-          ),
-          const SizedBox(height: 20),
-          Text(
-            _currentSearchQuery.isEmpty
-                ? (_currentFilter == 'all'
-                      ? "No users found"
-                      : "No $filterLabel users")
-                : "No results for '$_currentSearchQuery'",
-            style: GoogleFonts.exo2(
-              color: Colors.white.withOpacity(0.5),
-              fontSize: 16,
-            ),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            _currentSearchQuery.isEmpty
-                ? (_currentFilter == 'all'
-                      ? "Add your first user to get started"
-                      : "Try a different filter")
-                : "Try a different search term",
-            style: GoogleFonts.ibmPlexSans(
-              color: Colors.white.withOpacity(0.25),
-              fontSize: 13,
-            ),
-          ),
-          if (_currentFilter != 'all' && _currentSearchQuery.isEmpty) ...[
-            const SizedBox(height: 16),
-            ScaleButton(
-              onTap: () => _onFilterChanged('all'),
-              child: LiquidGlassContainer(
-                borderRadius: BorderRadius.circular(12),
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 10,
-                ),
-                opacity: 0.06,
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Icon(
-                      Iconsax.people,
-                      size: 14,
-                      color: Colors.blueAccent,
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      "Show All Users",
-                      style: GoogleFonts.ibmPlexSans(
-                        color: Colors.white.withOpacity(0.7),
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-
-  Widget _buildLoadMoreButton() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 20.0),
-      child: Center(
-        child: _isLoadingMore
-            ? const SizedBox(
-                width: 20,
-                height: 20,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  color: AppColors.accentGreen,
-                ),
-              )
-            : ScaleButton(
-                onTap: _loadMoreUsers,
-                child: LiquidGlassContainer(
-                  borderRadius: BorderRadius.circular(16),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 20,
-                    vertical: 10,
-                  ),
-                  opacity: 0.06,
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Icon(
-                        Iconsax.arrow_down_1,
-                        size: 14,
-                        color: Colors.white70,
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        "Load More",
-                        style: GoogleFonts.ibmPlexSans(
-                          color: Colors.white,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      const SizedBox(width: 6),
-                      Text(
-                        "($_currentPage/$_lastPage)",
-                        style: GoogleFonts.spaceMono(
-                          color: Colors.white38,
-                          fontSize: 10,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-      ),
-    );
-  }
-
-  Widget _buildPageIndicator() {
-    if (_users.isEmpty) return const SizedBox(height: 20);
-    return Padding(
-      padding: const EdgeInsets.only(top: 8, bottom: 20),
-      child: Center(
-        child: Text(
-          "${_users.length} users loaded",
-          style: GoogleFonts.ibmPlexSans(
-            color: Colors.white.withOpacity(0.2),
-            fontSize: 11,
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildGlassUserCard(VpnUser user) {
-    final expiryInfo = _getExpiryStatus(user.expiryDate, user.status);
-    final Color statusColor = expiryInfo['color'];
-    final IconData statusIcon = expiryInfo['icon'];
-    final String statusText = expiryInfo['status_text'];
-    final String dateText = expiryInfo['date_text'];
-    final Color planColor = _getPlanColor(user.planName);
-    final bool isBusiness = user.hasBusinessPlan;
-    final bool isOnline = user.isOnline;
-    final bool hasExtraSlots = user.extraDeviceSlots > 0;
-
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
-      child: ScaleButton(
-        onTap: () async {
-          final result = await Navigator.push(
-            context,
-            MaterialPageRoute(builder: (_) => EditUserScreen(user: user)),
-          );
-          if (result == true) _loadUsers(refresh: true);
-        },
-        scaleAmount: 0.98,
-        child: LiquidGlassContainer(
-          borderRadius: BorderRadius.circular(22),
-          opacity: isBusiness ? 0.07 : 0.05,
-          tintColor: isBusiness ? const Color(0xFFF97316) : null,
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            children: [
-              Row(
-                children: [
-                  Stack(
-                    clipBehavior: Clip.none,
-                    children: [
-                      Container(
-                        width: 48,
-                        height: 48,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          gradient: LinearGradient(
-                            colors: isBusiness
-                                ? [
-                                    const Color(0xFFF97316).withOpacity(0.3),
-                                    const Color(0xFFEA580C).withOpacity(0.15),
-                                  ]
-                                : [
-                                    AppColors.accentGreen.withOpacity(0.2),
-                                    Colors.blueAccent.withOpacity(0.1),
-                                  ],
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                          ),
-                          border: Border.all(
-                            color: isBusiness
-                                ? const Color(0xFFF97316).withOpacity(0.5)
-                                : Colors.white.withOpacity(0.1),
-                            width: isBusiness ? 2.0 : 1.0,
-                          ),
-                        ),
-                        child: Center(
-                          child: Text(
-                            user.username.isNotEmpty
-                                ? user.username[0].toUpperCase()
-                                : "U",
-                            style: GoogleFonts.exo2(
-                              color: isBusiness
-                                  ? const Color(0xFFF97316)
-                                  : Colors.white,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 20,
-                            ),
-                          ),
-                        ),
-                      ),
-                      if (isBusiness)
-                        Positioned(
-                          right: -2,
-                          bottom: -2,
-                          child: Container(
-                            width: 20,
-                            height: 20,
-                            decoration: BoxDecoration(
-                              color: const Color(0xFFF97316),
-                              shape: BoxShape.circle,
-                              border: Border.all(
-                                color: const Color(0xFF0F0F10),
-                                width: 2,
-                              ),
-                            ),
-                            child: const Icon(
-                              Iconsax.briefcase,
-                              size: 10,
-                              color: Colors.white,
-                            ),
-                          ),
-                        ),
-                      if (isOnline)
-                        Positioned(
-                          left: -3,
-                          top: -3,
-                          child: _PulsingDot(
-                            color: const Color(0xFF22D3EE),
-                            size: 7,
-                          ),
-                        ),
-                    ],
-                  ),
-                  const SizedBox(width: 14),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            Flexible(
-                              child: Text(
-                                user.username,
-                                style: GoogleFonts.exo2(
-                                  color: Colors.white,
-                                  fontSize: 15,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                            if (isOnline) ...[
-                              const SizedBox(width: 8),
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 6,
-                                  vertical: 2,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: const Color(
-                                    0xFF22D3EE,
-                                  ).withOpacity(0.1),
-                                  borderRadius: BorderRadius.circular(5),
-                                ),
-                                child: Text(
-                                  "ONLINE",
-                                  style: GoogleFonts.spaceMono(
-                                    color: const Color(0xFF22D3EE),
-                                    fontSize: 8,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ],
-                        ),
-                        const SizedBox(height: 4),
-                        Row(
-                          children: [
-                            Icon(Iconsax.flash_1, size: 11, color: planColor),
-                            const SizedBox(width: 4),
-                            Flexible(
-                              child: Text(
-                                user.planName ?? "No Plan",
-                                style: GoogleFonts.ibmPlexSans(
-                                  color: Colors.white.withOpacity(0.5),
-                                  fontSize: 11,
-                                ),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                            if (isBusiness) ...[
-                              const SizedBox(width: 6),
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 5,
-                                  vertical: 2,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: const Color(
-                                    0xFFF97316,
-                                  ).withOpacity(0.12),
-                                  borderRadius: BorderRadius.circular(5),
-                                  border: Border.all(
-                                    color: const Color(
-                                      0xFFF97316,
-                                    ).withOpacity(0.25),
-                                    width: 0.5,
-                                  ),
-                                ),
-                                child: Text(
-                                  user.businessPlanName ?? "Business",
-                                  style: GoogleFonts.ibmPlexSans(
-                                    color: const Color(0xFFF97316),
-                                    fontSize: 8,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                              ),
-                            ],
-                            if (hasExtraSlots) ...[
-                              const SizedBox(width: 6),
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 5,
-                                  vertical: 2,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: Colors.blueAccent.withOpacity(0.1),
-                                  borderRadius: BorderRadius.circular(5),
-                                ),
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    const Icon(
-                                      Iconsax.mobile,
-                                      size: 8,
-                                      color: Colors.blueAccent,
-                                    ),
-                                    const SizedBox(width: 3),
-                                    Text(
-                                      "+${user.extraDeviceSlots}",
-                                      style: GoogleFonts.spaceMono(
-                                        color: Colors.blueAccent,
-                                        fontSize: 8,
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ],
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 6,
-                    ),
-                    decoration: BoxDecoration(
-                      color: statusColor.withOpacity(0.12),
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(
-                        color: statusColor.withOpacity(0.25),
-                        width: 1,
-                      ),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(statusIcon, size: 10, color: statusColor),
-                        const SizedBox(width: 5),
-                        Text(
-                          statusText,
-                          style: GoogleFonts.ibmPlexSans(
-                            color: statusColor,
-                            fontSize: 10,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 14),
-              Divider(color: Colors.white.withOpacity(0.04), height: 1),
-              const SizedBox(height: 10),
-              Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 6,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.04),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(
-                          Iconsax.calendar_1,
-                          size: 12,
-                          color: Colors.white.withOpacity(0.35),
-                        ),
-                        const SizedBox(width: 6),
-                        Text(
-                          dateText,
-                          style: GoogleFonts.ibmPlexSans(
-                            color: Colors.white.withOpacity(0.55),
-                            fontSize: 11,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                      ],
+                  const SizedBox(width: 7),
+                  Text(
+                    'Expiring this week',
+                    style: t.bodyMedium?.copyWith(
+                      color: AppColors.textPrimary,
+                      fontWeight: FontWeight.w700,
                     ),
                   ),
                   const Spacer(),
-                  ScaleButton(
-                    onTap: () => _showGlassDeleteConfirm(user),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 6,
-                      ),
-                      decoration: BoxDecoration(
-                        color: Colors.redAccent.withOpacity(0.08),
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(
-                          color: Colors.redAccent.withOpacity(0.15),
+                  // Tapping through switches to the expiring filter, since the
+                  // strip deliberately shows only the ten soonest.
+                  InkWell(
+                    onTap: onSeeAll,
+                    borderRadius: BorderRadius.circular(999),
+                    child: Row(
+                      children: [
+                        AppPill(
+                          label: '$total',
+                          color: AppColors.warning,
+                          background: AppColors.surface,
                         ),
-                      ),
-                      child: Row(
+                        const Icon(
+                          Icons.chevron_right_rounded,
+                          size: 18,
+                          color: AppColors.warning,
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+            // Height is set from the parts: 48 ring + 4 gap + two 12pt lines.
+            // The previous 78 clipped the portrait once it replaced a letter.
+            SizedBox(
+              height: 84,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                // Clipped: Clip.none let avatars scroll on past the card's
+                // rounded edge and sit loose on the page behind it.
+                clipBehavior: Clip.hardEdge,
+                // The card no longer pads its sides, so the inset lives here:
+                // the row scrolls to the card's own edge and is clipped there.
+                padding: const EdgeInsets.symmetric(horizontal: 14),
+                itemCount: users.length,
+                separatorBuilder: (_, __) => const SizedBox(width: 12),
+                itemBuilder: (context, i) {
+                  final user = users[i];
+                  final expiry = _Expiry.of(user.expiryDate, user.status);
+                  return SizedBox(
+                    width: 60,
+                    child: InkWell(
+                      onTap: () => onTap(user),
+                      borderRadius: BorderRadius.circular(AppTheme.radiusSm),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
                         children: [
-                          const Icon(
-                            Iconsax.trash,
-                            size: 12,
-                            color: Colors.redAccent,
-                          ),
-                          const SizedBox(width: 5),
-                          Text(
-                            "Remove",
-                            style: GoogleFonts.ibmPlexSans(
-                              color: Colors.redAccent,
-                              fontSize: 10,
-                              fontWeight: FontWeight.bold,
+                          Container(
+                            padding: const EdgeInsets.all(2),
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: AppColors.surface,
+                              border: Border.all(color: expiry.color, width: 2),
                             ),
+                            child: _Avatar(
+                              username: user.username,
+                              isBusiness: user.hasBusinessPlan,
+                              isOnline: user.isOnline,
+                            ),
+                          ),
+                          const SizedBox(height: 5),
+                          Text(
+                            expiry.label,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: t.bodySmall?.copyWith(
+                              color: expiry.color,
+                              fontSize: 10,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                          Text(
+                            user.username,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            textAlign: TextAlign.center,
+                            style: t.bodySmall?.copyWith(fontSize: 10),
                           ),
                         ],
                       ),
                     ),
-                  ),
-                ],
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _Avatar extends StatelessWidget {
+  final String username;
+  final bool isBusiness;
+  final bool isOnline;
+
+  const _Avatar({
+    required this.username,
+    required this.isBusiness,
+    required this.isOnline,
+  });
+
+  /// Illustrated portraits instead of an initial. There is no gender or photo
+  /// on VpnUser, so one is picked from the username's hash: the same account
+  /// always gets the same face, which makes a row recognisable on return
+  /// rather than reshuffling on every rebuild.
+  static const _avatars = [
+    'assets/images/avatars/a1.png',
+    'assets/images/avatars/a2.png',
+  ];
+
+  String get _asset {
+    if (username.isEmpty) return _avatars.first;
+    var hash = 0;
+    for (final code in username.codeUnits) {
+      hash = (hash * 31 + code) & 0x7fffffff;
+    }
+    return _avatars[hash % _avatars.length];
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 44,
+      height: 44,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          ClipOval(
+            child: Image.asset(
+              _asset,
+              width: 44,
+              height: 44,
+              fit: BoxFit.cover,
+            ),
+          ),
+          if (isBusiness)
+            Positioned(
+              left: -1,
+              top: -1,
+              child: Container(
+                width: 15,
+                height: 15,
+                decoration: BoxDecoration(
+                  color: AppColors.orange,
+                  shape: BoxShape.circle,
+                  border: Border.all(color: AppColors.surface, width: 1.5),
+                ),
+                child: const Icon(
+                  Iconsax.briefcase,
+                  size: 7,
+                  color: AppColors.textOnAccent,
+                ),
+              ),
+            ),
+          if (isOnline)
+            Positioned(
+              right: -1,
+              bottom: -1,
+              child: Container(
+                width: 12,
+                height: 12,
+                decoration: BoxDecoration(
+                  color: AppColors.success,
+                  shape: BoxShape.circle,
+                  // Ring in the surface colour so the dot reads as separate
+                  // from whatever sits behind it.
+                  border: Border.all(color: AppColors.surface, width: 2),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MiniTag extends StatelessWidget {
+  final String label;
+  final Color color;
+  final Color background;
+
+  const _MiniTag({
+    required this.label,
+    required this.color,
+    required this.background,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: background,
+        borderRadius: BorderRadius.circular(5),
+      ),
+      child: Text(
+        label,
+        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+          color: color,
+          fontSize: 9,
+          fontWeight: FontWeight.w800,
+        ),
+      ),
+    );
+  }
+}
+
+class _FilterChip extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _FilterChip({
+    required this.label,
+    required this.icon,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    // One accent for the selected chip rather than a colour per filter. Four
+    // hues across four chips gave every option equal visual weight and told
+    // the eye nothing about which was active.
+    return Material(
+      color: selected ? AppColors.accent : AppColors.surface,
+      borderRadius: BorderRadius.circular(999),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(999),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14),
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(
+              color: selected ? AppColors.accent : AppColors.border,
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                icon,
+                size: 14,
+                color: selected
+                    ? AppColors.textOnAccent
+                    : AppColors.textSecondary,
+              ),
+              const SizedBox(width: 6),
+              Text(
+                label,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: selected
+                      ? AppColors.textOnAccent
+                      : AppColors.textSecondary,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _ListSkeleton extends StatelessWidget {
+  const _ListSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    // Same itemExtent as the real list, so nothing shifts when the rows
+    // replace the placeholders.
+    return ListView.builder(
+      padding: const EdgeInsets.only(top: 8),
+      physics: const NeverScrollableScrollPhysics(),
+      itemExtent: _UserRow.heightFor(context),
+      itemCount: 8,
+      itemBuilder: (_, __) => const Padding(
+        padding: EdgeInsets.fromLTRB(16, 10, 12, 9),
+        child: Row(
+          children: [
+            AppSkeleton(width: 44, height: 44, radius: 22),
+            SizedBox(width: 12),
+            Expanded(
+              // Two bars, matching the real row's two text lines. A third bar
+              // was 21px of content the row's height never allowed for, so
+              // every placeholder overflowed.
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  AppSkeleton(width: 130, height: 13),
+                  SizedBox(height: 6),
+                  AppSkeleton(width: 170, height: 11),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Red panel revealed behind a swiped row.
+class _SwipeAction extends StatelessWidget {
+  final Alignment alignment;
+
+  const _SwipeAction({required this.alignment});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      color: AppColors.danger,
+      alignment: alignment,
+      padding: const EdgeInsets.symmetric(horizontal: 22),
+      child: const Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Iconsax.trash, size: 18, color: AppColors.textOnAccent),
+          SizedBox(width: 8),
+          Text(
+            'Remove',
+            style: TextStyle(
+              color: AppColors.textOnAccent,
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
       ),
     );
   }
