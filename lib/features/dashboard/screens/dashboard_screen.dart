@@ -483,7 +483,11 @@ class _Header extends StatelessWidget {
           ),
           const SizedBox(width: 8),
         ],
-        _HeaderButton(icon: Iconsax.notification, onTap: onNotifications),
+        _HeaderButton(
+          icon: Iconsax.notification,
+          onTap: onNotifications,
+          badge: stats.unreadNotificationCount,
+        ),
         const SizedBox(width: 8),
         _HeaderButton(icon: Iconsax.user, onTap: onProfile),
       ],
@@ -495,16 +499,57 @@ class _HeaderButton extends StatelessWidget {
   final IconData icon;
   final VoidCallback onTap;
 
-  const _HeaderButton({required this.icon, required this.onTap});
+  /// Unread count, drawn as a badge. Zero hides it.
+  final int badge;
+
+  const _HeaderButton({
+    required this.icon,
+    required this.onTap,
+    this.badge = 0,
+  });
 
   @override
   Widget build(BuildContext context) {
-    return AppCard(
+    final button = AppCard(
       onTap: onTap,
       padding: const EdgeInsets.all(10),
       radius: AppTheme.radiusSm,
       showShadow: false,
       child: Icon(icon, size: 20, color: AppColors.textSecondary),
+    );
+
+    if (badge == 0) return button;
+
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        button,
+        Positioned(
+          top: -4,
+          right: -4,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+            constraints: const BoxConstraints(minWidth: 18),
+            decoration: BoxDecoration(
+              color: AppColors.danger,
+              borderRadius: BorderRadius.circular(999),
+              // Ringed in the page colour so the badge reads as separate from
+              // the button rather than part of its outline.
+              border: Border.all(color: AppColors.background, width: 1.5),
+            ),
+            child: Text(
+              badge > 99 ? '99+' : '$badge',
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: AppColors.textOnAccent,
+                fontSize: 10,
+                fontWeight: FontWeight.w800,
+                height: 1.4,
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

@@ -23,6 +23,9 @@ class DashboardStats extends Equatable {
   final int pendingRequestCount;
   final int unreadChatCount;
 
+  /// Unread notifications addressed to this agent, for the bell badge.
+  final int unreadNotificationCount;
+
   const DashboardStats({
     required this.agentName,
     required this.activeUserCount,
@@ -36,6 +39,7 @@ class DashboardStats extends Equatable {
     required this.recentRequests,
     this.pendingRequestCount = 0,
     this.unreadChatCount = 0,
+    this.unreadNotificationCount = 0,
   });
 
   factory DashboardStats.fromJson(Map<String, dynamic> json) {
@@ -56,6 +60,7 @@ class DashboardStats extends Equatable {
           : [],
       pendingRequestCount: json['pending_request_count'] ?? 0,
       unreadChatCount: json['unread_chat_count'] ?? 0,
+      unreadNotificationCount: json['unread_notification_count'] ?? 0,
     );
   }
 
@@ -99,17 +104,18 @@ class DashboardStats extends Equatable {
 
   @override
   List<Object?> get props => [
-        agentName,
-        activeUserCount,
-        totalUserCount,
-        expiringSoonCount,
-        businessUserCount,
-        onlineUserCount,
-        subAgentCount,
-        creditBalance,
-        creditsSpent,
-        recentRequests,
-        pendingRequestCount,
-        unreadChatCount,
-      ];
+    agentName,
+    activeUserCount,
+    totalUserCount,
+    expiringSoonCount,
+    businessUserCount,
+    onlineUserCount,
+    subAgentCount,
+    creditBalance,
+    creditsSpent,
+    recentRequests,
+    pendingRequestCount,
+    unreadChatCount,
+    unreadNotificationCount,
+  ];
 }

@@ -49,7 +49,7 @@ class DashboardLoaded extends DashboardState {
   final bool isStale;
 
   DashboardLoaded(this.stats, {DateTime? fetchedAt, this.isStale = false})
-      : fetchedAt = fetchedAt ?? DateTime.now();
+    : fetchedAt = fetchedAt ?? DateTime.now();
 
   @override
   List<Object?> get props => [stats, fetchedAt, isStale];
@@ -135,11 +135,13 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
       if (isBackground) {
         final current = state;
         if (current is DashboardLoaded && !current.isStale) {
-          emit(DashboardLoaded(
-            current.stats,
-            fetchedAt: current.fetchedAt,
-            isStale: true,
-          ));
+          emit(
+            DashboardLoaded(
+              current.stats,
+              fetchedAt: current.fetchedAt,
+              isStale: true,
+            ),
+          );
         }
       }
       if (!isBackground) {

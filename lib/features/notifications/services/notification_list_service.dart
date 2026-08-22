@@ -1,4 +1,5 @@
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import 'package:vpn_agent_app/core/api/api_client.dart';
 import '../models/notification_model.dart';
 
@@ -27,6 +28,54 @@ class NotificationListService {
     } catch (e) {
       print('Error fetching notifications: $e');
       return [];
+    }
+  }
+
+  /// Unread count for the header badge.
+  Future<int> getUnreadCount() async {
+    try {
+      final response = await _dio.get('/notifications/unread-count');
+      if (response.statusCode == 200) {
+        return (response.data['unread_count'] as num?)?.toInt() ?? 0;
+      }
+    } catch (e) {
+      debugPrint('Unread count failed: $e');
+    }
+    return 0;
+  }
+
+  /// The three actions the screen was only performing locally.
+  ///
+  /// Reading, deleting and clearing all previously changed nothing on the
+  /// server: the list was mutated in setState and reverted on the next load,
+  /// so a notification "read" yesterday came back unread today.
+  Future<bool> markAsRead(String id) async {
+    try {
+      final response = await _dio.post('/notifications/$id/mark-read');
+      return response.statusCode == 200;
+    } catch (e) {
+      debugPrint('Mark read failed: $e');
+      return false;
+    }
+  }
+
+  Future<bool> markAllAsRead() async {
+    try {
+      final response = await _dio.post('/notifications/mark-all-read');
+      return response.statusCode == 200;
+    } catch (e) {
+      debugPrint('Mark all read failed: $e');
+      return false;
+    }
+  }
+
+  Future<bool> deleteNotification(String id) async {
+    try {
+      final response = await _dio.delete('/notifications/$id');
+      return response.statusCode == 200;
+    } catch (e) {
+      debugPrint('Delete notification failed: $e');
+      return false;
     }
   }
 
