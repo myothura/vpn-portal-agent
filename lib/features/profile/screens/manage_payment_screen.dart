@@ -1,136 +1,20 @@
 import 'dart:io';
-import 'dart:math';
-import 'dart:ui';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:iconsax/iconsax.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:uuid/uuid.dart';
+
 import 'package:vpn_agent_app/core/theme/app_colors.dart';
+import 'package:vpn_agent_app/core/theme/app_theme.dart';
+import 'package:vpn_agent_app/shared_widgets/ui/app_surface.dart';
+
 import 'package:vpn_agent_app/features/profile/models/payment_method_model.dart';
 import 'package:vpn_agent_app/features/profile/services/profile_service.dart';
 
-// --- Reusable UI Components (Consistent with Dashboard) ---
-
-class LiquidGlassContainer extends StatelessWidget {
-  final Widget child;
-  final double blurSigma;
-  final double opacity;
-  final BorderRadius? borderRadius;
-  final EdgeInsetsGeometry padding;
-  final Color? tintColor;
-  final bool withBorder;
-  final VoidCallback? onTap;
-  final LinearGradient? gradient; // Added custom gradient support
-
-  const LiquidGlassContainer({
-    super.key,
-    required this.child,
-    this.blurSigma = 20.0,
-    this.opacity = 0.08,
-    this.borderRadius,
-    this.padding = EdgeInsets.zero,
-    this.tintColor,
-    this.withBorder = true,
-    this.onTap,
-    this.gradient,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final radius = borderRadius ?? BorderRadius.circular(24);
-    Widget content = ClipRRect(
-      borderRadius: radius,
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: blurSigma, sigmaY: blurSigma),
-        child: Container(
-          padding: padding,
-          decoration: BoxDecoration(
-            color: (tintColor ?? Colors.white).withOpacity(opacity),
-            borderRadius: radius,
-            border: withBorder
-                ? Border.all(color: Colors.white.withOpacity(0.15), width: 1.0)
-                : null,
-            gradient:
-                gradient ??
-                LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [
-                    (tintColor ?? Colors.white).withOpacity(opacity + 0.1),
-                    (tintColor ?? Colors.white).withOpacity(opacity),
-                  ],
-                ),
-          ),
-          child: child,
-        ),
-      ),
-    );
-
-    if (onTap != null) {
-      return GestureDetector(onTap: onTap, child: content);
-    }
-    return content;
-  }
-}
-
-class ScaleButton extends StatefulWidget {
-  final Widget child;
-  final VoidCallback? onTap;
-  final double scaleAmount;
-  const ScaleButton({
-    super.key,
-    required this.child,
-    required this.onTap,
-    this.scaleAmount = 0.95,
-  });
-  @override
-  State<ScaleButton> createState() => _ScaleButtonState();
-}
-
-class _ScaleButtonState extends State<ScaleButton>
-    with SingleTickerProviderStateMixin {
-  late AnimationController _controller;
-  late Animation<double> _scaleAnimation;
-  @override
-  void initState() {
-    super.initState();
-    _controller = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 100),
-    );
-    _scaleAnimation = Tween<double>(
-      begin: 1.0,
-      end: widget.scaleAmount,
-    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeInOut));
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTapDown: (_) => _controller.forward(),
-      onTapUp: (_) {
-        _controller.reverse();
-        widget.onTap?.call();
-        HapticFeedback.lightImpact();
-      },
-      onTapCancel: () => _controller.reverse(),
-      child: ScaleTransition(scale: _scaleAnimation, child: widget.child),
-    );
-  }
-}
-
-// --- Main Screen ---
-
 class ManagePaymentScreen extends StatefulWidget {
   final List<PaymentMethod> initialMethods;
+
   const ManagePaymentScreen({super.key, required this.initialMethods});
 
   @override
@@ -138,776 +22,690 @@ class ManagePaymentScreen extends StatefulWidget {
 }
 
 class _ManagePaymentScreenState extends State<ManagePaymentScreen> {
-  final ProfileService _profileService = ProfileService();
+  final _service = ProfileService();
+
   late List<PaymentMethod> _methods;
-  bool _isSaving = false;
+  bool _saving = false;
+
+  /// Whether anything has been added, edited or removed since opening.
+  ///
+  /// The save posts the whole list, so an unsaved deletion is indistinguishable
+  /// from never having deleted — leaving without saving silently discards the
+  /// work, and the screen has to say so.
+  bool _dirty = false;
 
   @override
   void initState() {
     super.initState();
-    _methods = List.from(widget.initialMethods);
+    _methods = widget.initialMethods
+        .map(
+          (m) => PaymentMethod(
+            id: m.id,
+            bankName: m.bankName,
+            accountName: m.accountName,
+            accountNumber: m.accountNumber,
+            qrCodeUrl: m.qrCodeUrl,
+            localImagePath: m.localImagePath,
+          ),
+        )
+        // Copied rather than referenced: editing in place would mutate the
+        // objects the profile screen is still holding, so a cancelled edit
+        // would show there anyway.
+        .toList();
   }
 
-  Future<void> _saveChanges() async {
-    setState(() => _isSaving = true);
-    final success = await _profileService.updatePaymentMethods(_methods);
-    setState(() => _isSaving = false);
+  // ── Save ────────────────────────────────────────────────────────────────
 
-    if (success && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text("Wallet updated successfully!"),
-          backgroundColor: AppColors.accentGreen,
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
-    } else if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text("Update failed. Please check connection."),
-          backgroundColor: Colors.redAccent,
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
+  Future<void> _save() async {
+    HapticFeedback.mediumImpact();
+    setState(() => _saving = true);
+
+    final success = await _service.updatePaymentMethods(_methods);
+    if (!mounted) return;
+    setState(() => _saving = false);
+
+    if (!success) {
+      _toast('Could not save. Check your connection and try again.');
+      return;
     }
+
+    // Popping with true tells the profile to refresh: its payment count is
+    // read from the profile payload, which is now stale.
+    final messenger = ScaffoldMessenger.of(context);
+    Navigator.of(context).pop(true);
+    messenger.showSnackBar(
+      const SnackBar(content: Text('Payment methods saved.')),
+    );
   }
 
-  // --- GLASS ADD / EDIT SHEET ---
-  void _showAddEditSheet({PaymentMethod? existingItem, int? index}) {
-    final bankController = TextEditingController(text: existingItem?.bankName);
-    final nameController = TextEditingController(
-      text: existingItem?.accountName,
-    );
-    final numController = TextEditingController(
-      text: existingItem?.accountNumber,
-    );
-    String? localImagePath = existingItem?.localImagePath;
+  Future<bool> _confirmDiscard() async {
+    if (!_dirty) return true;
 
-    showModalBottomSheet(
+    final ok = await showDialog<bool>(
       context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (ctx) => StatefulBuilder(
-        builder: (context, setModalState) {
-          // Full Screen Glass Effect
-          return Stack(
-            children: [
-              // Blur Background
-              Positioned.fill(
-                child: BackdropFilter(
-                  filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-                  child: Container(color: Colors.black.withOpacity(0.6)),
-                ),
-              ),
-
-              // Content
-              Align(
-                alignment: Alignment.bottomCenter,
-                child: Container(
-                  constraints: BoxConstraints(
-                    maxHeight: MediaQuery.of(context).size.height * 0.85,
-                  ),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF1C1C1E).withOpacity(0.5),
-                    borderRadius: const BorderRadius.vertical(
-                      top: Radius.circular(30),
-                    ),
-                    border: Border(
-                      top: BorderSide(color: Colors.white.withOpacity(0.2)),
-                    ),
-                  ),
-                  padding: EdgeInsets.only(
-                    bottom: MediaQuery.of(context).viewInsets.bottom + 30,
-                    left: 24,
-                    right: 24,
-                    top: 20,
-                  ),
-                  child: SingleChildScrollView(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Center(
-                          child: Container(
-                            width: 40,
-                            height: 4,
-                            decoration: BoxDecoration(
-                              color: Colors.white.withOpacity(0.3),
-                              borderRadius: BorderRadius.circular(2),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 24),
-
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Text(
-                              existingItem == null ? "New Card" : "Edit Card",
-                              style: GoogleFonts.exo2(
-                                color: Colors.white,
-                                fontSize: 24,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                            ScaleButton(
-                              onTap: () => Navigator.pop(context),
-                              child: LiquidGlassContainer(
-                                borderRadius: BorderRadius.circular(12),
-                                padding: const EdgeInsets.all(8),
-                                opacity: 0.1,
-                                child: const Icon(
-                                  Icons.close,
-                                  color: Colors.white70,
-                                  size: 20,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 30),
-
-                        // QR Uploader (Glass)
-                        GestureDetector(
-                          onTap: () async {
-                            final picker = ImagePicker();
-                            final picked = await picker.pickImage(
-                              source: ImageSource.gallery,
-                            );
-                            if (picked != null) {
-                              setModalState(() => localImagePath = picked.path);
-                            }
-                          },
-                          child: LiquidGlassContainer(
-                            borderRadius: BorderRadius.circular(24),
-                            opacity: 0.05,
-                            withBorder: true,
-                            child: Container(
-                              height: 140,
-                              width: double.infinity,
-                              decoration: BoxDecoration(
-                                image: localImagePath != null
-                                    ? DecorationImage(
-                                        image: FileImage(File(localImagePath!)),
-                                        fit: BoxFit.cover,
-                                      )
-                                    : (existingItem?.qrCodeUrl != null
-                                          ? DecorationImage(
-                                              image: NetworkImage(
-                                                existingItem!.qrCodeUrl!,
-                                              ),
-                                              fit: BoxFit.cover,
-                                            )
-                                          : null),
-                              ),
-                              child: Stack(
-                                alignment: Alignment.center,
-                                children: [
-                                  if (localImagePath == null &&
-                                      existingItem?.qrCodeUrl == null)
-                                    Column(
-                                      mainAxisAlignment:
-                                          MainAxisAlignment.center,
-                                      children: [
-                                        const Icon(
-                                          Iconsax.scan,
-                                          color: Colors.white54,
-                                          size: 32,
-                                        ),
-                                        const SizedBox(height: 8),
-                                        Text(
-                                          "Tap to upload QR",
-                                          style: GoogleFonts.ibmPlexSans(
-                                            color: Colors.white38,
-                                            fontSize: 12,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-
-                                  if (localImagePath != null ||
-                                      existingItem?.qrCodeUrl != null)
-                                    Positioned(
-                                      bottom: 12,
-                                      right: 12,
-                                      child: LiquidGlassContainer(
-                                        borderRadius: BorderRadius.circular(12),
-                                        padding: const EdgeInsets.all(8),
-                                        opacity: 0.3,
-                                        tintColor: Colors.black,
-                                        child: const Icon(
-                                          Iconsax.edit,
-                                          color: Colors.white,
-                                          size: 16,
-                                        ),
-                                      ),
-                                    ),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 24),
-
-                        _buildGlassTextField(
-                          bankController,
-                          "BANK NAME",
-                          "KBZ Pay, Wave...",
-                          Iconsax.bank,
-                        ),
-                        const SizedBox(height: 16),
-                        _buildGlassTextField(
-                          nameController,
-                          "ACCOUNT HOLDER",
-                          "U Mya",
-                          Iconsax.user,
-                        ),
-                        const SizedBox(height: 16),
-                        _buildGlassTextField(
-                          numController,
-                          "ACCOUNT NUMBER",
-                          "09xxxxxxxxx",
-                          Iconsax.card,
-                          isNumber: true,
-                        ),
-
-                        const SizedBox(height: 32),
-
-                        // Save Button (Glass Gradient)
-                        ScaleButton(
-                          onTap: () {
-                            if (bankController.text.isEmpty ||
-                                numController.text.isEmpty)
-                              return;
-
-                            final newItem = PaymentMethod(
-                              id: existingItem?.id ?? const Uuid().v4(),
-                              bankName: bankController.text,
-                              accountName: nameController.text,
-                              accountNumber: numController.text,
-                              localImagePath: localImagePath,
-                              qrCodeUrl: existingItem?.qrCodeUrl,
-                            );
-
-                            setState(() {
-                              if (index != null) {
-                                _methods[index] = newItem;
-                              } else {
-                                _methods.add(newItem);
-                              }
-                            });
-
-                            Navigator.pop(context);
-                            _saveChanges();
-                          },
-                          child: LiquidGlassContainer(
-                            borderRadius: BorderRadius.circular(20),
-                            opacity: 0.2,
-                            tintColor: AppColors.accentGreen,
-                            padding: const EdgeInsets.symmetric(vertical: 18),
-                            child: Center(
-                              child: Text(
-                                "SAVE CARD",
-                                style: GoogleFonts.exo2(
-                                  color: Colors.white,
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.bold,
-                                  letterSpacing: 1.0,
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          );
-        },
-      ),
-    );
-  }
-
-  Widget _buildGlassTextField(
-    TextEditingController controller,
-    String label,
-    String hint,
-    IconData icon, {
-    bool isNumber = false,
-  }) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          label,
-          style: GoogleFonts.exo2(
-            color: Colors.white.withOpacity(0.5),
-            fontSize: 11,
-            fontWeight: FontWeight.bold,
-            letterSpacing: 1.2,
-          ),
+      builder: (ctx) => AlertDialog(
+        title: const Text('Discard changes?'),
+        content: Text(
+          'Your payment methods have not been saved.',
+          style: Theme.of(ctx).textTheme.bodyMedium,
         ),
-        const SizedBox(height: 8),
-        LiquidGlassContainer(
-          borderRadius: BorderRadius.circular(16),
-          opacity: 0.05,
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          child: TextFormField(
-            controller: controller,
-            keyboardType: isNumber ? TextInputType.number : TextInputType.text,
-            style: GoogleFonts.spaceMono(
-              color: Colors.white,
-              fontSize: 16,
-              fontWeight: FontWeight.bold,
-            ),
-            decoration: InputDecoration(
-              hintText: hint,
-              hintStyle: GoogleFonts.ibmPlexSans(
-                color: Colors.white.withOpacity(0.2),
-                fontWeight: FontWeight.normal,
-              ),
-              prefixIcon: Icon(
-                icon,
-                color: Colors.white.withOpacity(0.5),
-                size: 20,
-              ),
-              border: InputBorder.none,
-              contentPadding: const EdgeInsets.symmetric(vertical: 16),
-            ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Keep editing'),
           ),
-        ),
-      ],
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppColors.darkBackground,
-      extendBodyBehindAppBar: true,
-      appBar: AppBar(
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        centerTitle: false,
-        leading: IconButton(
-          icon: Container(
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.05),
-              shape: BoxShape.circle,
-            ),
-            child: const Icon(
-              Iconsax.arrow_left_2,
-              color: Colors.white,
-              size: 20,
-            ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: AppColors.danger),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Discard'),
           ),
-          onPressed: () => Navigator.pop(context, true),
-        ),
-        title: Text(
-          "My Payment",
-          style: GoogleFonts.exo2(
-            color: Colors.white,
-            fontWeight: FontWeight.bold,
-            fontSize: 24,
-          ),
-        ),
-      ),
-      body: Stack(
-        children: [
-          // 1. Background
-          Positioned.fill(
-            child: Container(
-              decoration: const BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  colors: [Color(0xFF0F0F10), Color(0xFF18181C)],
-                ),
-              ),
-            ),
-          ),
-
-          // 2. Content
-          SafeArea(
-            child: _methods.isEmpty
-                ? Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        LiquidGlassContainer(
-                          borderRadius: BorderRadius.circular(30),
-                          padding: const EdgeInsets.all(24),
-                          opacity: 0.05,
-                          child: Icon(
-                            Iconsax.card_slash,
-                            size: 48,
-                            color: Colors.white.withOpacity(0.2),
-                          ),
-                        ),
-                        const SizedBox(height: 16),
-                        Text(
-                          "No cards in wallet",
-                          style: GoogleFonts.exo2(
-                            color: Colors.white.withOpacity(0.3),
-                            fontSize: 16,
-                          ),
-                        ),
-                      ],
-                    ),
-                  )
-                : ListView.builder(
-                    padding: const EdgeInsets.fromLTRB(20, 20, 20, 150),
-                    physics: const BouncingScrollPhysics(),
-                    itemCount: _methods.length,
-                    itemBuilder: (context, index) {
-                      final item = _methods[index];
-                      return _buildGlassCreditCard(item, index);
-                    },
-                  ),
-          ),
-
-          // 3. Glass Bottom Dock
-          Positioned(
-            left: 20,
-            right: 20,
-            bottom: 30,
-            child: LiquidGlassContainer(
-              borderRadius: BorderRadius.circular(24),
-              opacity: 0.15, // Higher opacity for dock
-              blurSigma: 25,
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-              withBorder: true,
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        "TOTAL CARDS",
-                        style: GoogleFonts.exo2(
-                          color: Colors.white54,
-                          fontSize: 10,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      Text(
-                        "${_methods.length}",
-                        style: GoogleFonts.spaceMono(
-                          color: Colors.white,
-                          fontSize: 20,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ],
-                  ),
-
-                  ScaleButton(
-                    onTap: () => _showAddEditSheet(),
-                    child: LiquidGlassContainer(
-                      borderRadius: BorderRadius.circular(16),
-                      opacity: 0.2,
-                      tintColor: AppColors.accentGreen,
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 20,
-                        vertical: 12,
-                      ),
-                      child: Row(
-                        children: [
-                          const Icon(
-                            Iconsax.add,
-                            color: Colors.white,
-                            size: 20,
-                          ),
-                          const SizedBox(width: 8),
-                          Text(
-                            "Add Card",
-                            style: GoogleFonts.exo2(
-                              color: Colors.white,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 14,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-
-          if (_isSaving)
-            Container(
-              color: Colors.black.withOpacity(0.5),
-              child: const Center(
-                child: CircularProgressIndicator(color: AppColors.accentGreen),
-              ),
-            ),
         ],
       ),
     );
+    return ok == true;
   }
 
-  // --- GLASS CREDIT CARD ---
-  Widget _buildGlassCreditCard(PaymentMethod item, int index) {
-    // Glass Tints for Cards
-    final List<Color> tints = [
-      Colors.blueAccent,
-      Colors.orangeAccent,
-      Colors.purpleAccent,
-      AppColors.accentGreen,
-    ];
-    final tintColor = tints[index % tints.length];
+  void _toast(String message) {
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
+  }
 
-    return ScaleButton(
-      onTap: () => _showAddEditSheet(existingItem: item, index: index),
-      scaleAmount: 0.98,
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 20),
-        height: 210,
-        child: LiquidGlassContainer(
-          borderRadius: BorderRadius.circular(24),
-          opacity: 0.15, // Glass Card Opacity
-          tintColor: tintColor,
-          blurSigma: 20,
-          withBorder: true,
-          padding: const EdgeInsets.all(24),
-          child: Stack(
-            children: [
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  // Top Row
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Row(
-                        children: [
-                          Icon(
-                            Iconsax.bank,
-                            color: Colors.white.withOpacity(0.9),
-                            size: 20,
-                          ),
-                          const SizedBox(width: 8),
-                          Text(
-                            item.bankName.toUpperCase(),
-                            style: GoogleFonts.exo2(
-                              color: Colors.white,
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                              letterSpacing: 1.0,
-                            ),
-                          ),
-                        ],
-                      ),
-                      if (item.qrCodeUrl != null || item.localImagePath != null)
-                        LiquidGlassContainer(
-                          borderRadius: BorderRadius.circular(12),
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 4,
-                          ),
-                          opacity: 0.2,
-                          child: const Row(
-                            children: [
-                              Icon(Iconsax.scan, color: Colors.white, size: 12),
-                              SizedBox(width: 4),
-                              Text(
-                                "QR",
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                    ],
-                  ),
+  // ── Editing ─────────────────────────────────────────────────────────────
 
-                  // Number
-                  Text(
-                    _formatCardNumber(item.accountNumber),
-                    style: GoogleFonts.spaceMono(
-                      color: Colors.white,
-                      fontSize: 22,
-                      fontWeight: FontWeight.bold,
-                      letterSpacing: 2.0,
-                      shadows: [
-                        Shadow(
-                          color: tintColor.withOpacity(0.5),
-                          blurRadius: 10,
-                          offset: const Offset(0, 2),
-                        ),
-                      ],
-                    ),
-                  ),
+  Future<void> _openEditor({PaymentMethod? existing, int? index}) async {
+    final result = await showModalBottomSheet<PaymentMethod>(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => _MethodSheet(existing: existing),
+    );
+    if (result == null || !mounted) return;
 
-                  // Bottom Info
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            "CARD HOLDER",
-                            style: GoogleFonts.exo2(
-                              color: Colors.white54,
-                              fontSize: 10,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          Text(
-                            item.accountName.toUpperCase(),
-                            style: GoogleFonts.exo2(
-                              color: Colors.white,
-                              fontSize: 14,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ],
-                      ),
+    setState(() {
+      _dirty = true;
+      if (index != null) {
+        _methods[index] = result;
+      } else {
+        _methods.add(result);
+      }
+    });
+  }
 
-                      // Delete Action in Glass Bubble
-                      ScaleButton(
-                        onTap: () => _showDeleteConfirm(index, item.bankName),
-                        child: LiquidGlassContainer(
-                          borderRadius: BorderRadius.circular(20),
-                          padding: const EdgeInsets.all(8),
-                          opacity: 0.2,
-                          tintColor: Colors.redAccent,
-                          child: const Icon(
-                            Iconsax.trash,
-                            color: Colors.white,
-                            size: 18,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ],
+  Future<void> _delete(int index) async {
+    final method = _methods[index];
+
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        icon: const AppIconBadge(
+          icon: Iconsax.trash,
+          color: AppColors.danger,
+          background: AppColors.dangerWash,
+          size: 22,
+          padding: 12,
+        ),
+        title: Text('Remove ${method.bankName}?'),
+        content: Text(
+          _methods.length == 1
+              // The last one is a different decision: without a payment
+              // method the agent cannot be paid at all.
+              ? 'This is your only payment method. Users will have no way to '
+                    'pay you until you add another.'
+              : 'Users will no longer see this account.',
+          style: Theme.of(ctx).textTheme.bodyMedium,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
           ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: AppColors.danger),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Remove'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+
+    setState(() {
+      _methods.removeAt(index);
+      _dirty = true;
+    });
+  }
+
+  // ── Build ───────────────────────────────────────────────────────────────
+
+  @override
+  Widget build(BuildContext context) {
+    return PopScope(
+      canPop: !_dirty,
+      onPopInvokedWithResult: (didPop, _) async {
+        if (didPop) return;
+        if (await _confirmDiscard() && mounted) {
+          Navigator.of(context).pop();
+        }
+      },
+      child: Scaffold(
+        backgroundColor: AppColors.background,
+        appBar: AppBar(title: const Text('Payment methods')),
+        body: Column(
+          children: [
+            Expanded(
+              child: _methods.isEmpty
+                  ? _buildEmpty()
+                  : ListView.separated(
+                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+                      physics: const BouncingScrollPhysics(),
+                      itemCount: _methods.length,
+                      separatorBuilder: (_, __) => const SizedBox(height: 10),
+                      itemBuilder: (context, i) => _MethodCard(
+                        method: _methods[i],
+                        onEdit: () =>
+                            _openEditor(existing: _methods[i], index: i),
+                        onDelete: () => _delete(i),
+                      ),
+                    ),
+            ),
+            _BottomBar(
+              count: _methods.length,
+              dirty: _dirty,
+              saving: _saving,
+              onAdd: () => _openEditor(),
+              onSave: _save,
+            ),
+          ],
         ),
       ),
     );
   }
 
-  void _showDeleteConfirm(int index, String bankName) {
-    showDialog(
-      context: context,
-      builder: (ctx) => BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
-        child: Dialog(
-          backgroundColor: Colors.transparent,
-          child: LiquidGlassContainer(
-            borderRadius: BorderRadius.circular(24),
-            padding: const EdgeInsets.all(24),
-            opacity: 0.15,
+  Widget _buildEmpty() {
+    return const AppEmptyState(
+      icon: Iconsax.card,
+      title: 'No payment methods',
+      subtitle:
+          'Add the accounts your users should pay into. Without one '
+          'they have no way to renew.',
+    );
+  }
+}
+
+// ── Card ──────────────────────────────────────────────────────────────────
+
+class _MethodCard extends StatelessWidget {
+  final PaymentMethod method;
+  final VoidCallback onEdit;
+  final VoidCallback onDelete;
+
+  const _MethodCard({
+    required this.method,
+    required this.onEdit,
+    required this.onDelete,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = Theme.of(context).textTheme;
+    final hasQr =
+        method.localImagePath != null ||
+        (method.qrCodeUrl != null && method.qrCodeUrl!.isNotEmpty);
+
+    return AppCard(
+      onTap: onEdit,
+      radius: AppTheme.radiusMd,
+      padding: const EdgeInsets.all(14),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _QrThumb(method: method),
+          const SizedBox(width: 12),
+          Expanded(
             child: Column(
-              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: Colors.redAccent.withOpacity(0.15),
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Icon(
-                    Iconsax.trash,
-                    color: Colors.redAccent,
-                    size: 32,
-                  ),
-                ),
-                const SizedBox(height: 20),
                 Text(
-                  "Remove Card?",
-                  style: GoogleFonts.exo2(
-                    color: Colors.white,
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                  ),
+                  method.bankName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: t.titleMedium?.copyWith(fontSize: 14.5),
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 3),
                 Text(
-                  "Are you sure you want to remove '$bankName'?",
-                  textAlign: TextAlign.center,
-                  style: GoogleFonts.ibmPlexSans(color: Colors.white70),
+                  method.accountName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: t.bodySmall,
                 ),
-                const SizedBox(height: 24),
+                const SizedBox(height: 5),
                 Row(
                   children: [
-                    Expanded(
-                      child: ScaleButton(
-                        onTap: () => Navigator.pop(ctx),
-                        child: LiquidGlassContainer(
-                          borderRadius: BorderRadius.circular(12),
-                          padding: const EdgeInsets.symmetric(vertical: 12),
-                          opacity: 0.1,
-                          child: Center(
-                            child: Text(
-                              "Cancel",
-                              style: GoogleFonts.ibmPlexSans(
-                                color: Colors.white70,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ),
+                    Flexible(
+                      child: Text(
+                        method.accountNumber,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: t.bodyLarge?.copyWith(
+                          fontSize: 13.5,
+                          fontWeight: FontWeight.w700,
+                          // Tabular figures: an account number is read digit
+                          // by digit and compared against a bank app.
+                          fontFeatures: const [FontFeature.tabularFigures()],
                         ),
                       ),
                     ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: ScaleButton(
-                        onTap: () {
-                          Navigator.pop(ctx);
-                          setState(() => _methods.removeAt(index));
-                          _saveChanges();
-                        },
-                        child: LiquidGlassContainer(
-                          borderRadius: BorderRadius.circular(12),
-                          padding: const EdgeInsets.symmetric(vertical: 12),
-                          opacity: 0.2,
-                          tintColor: Colors.redAccent,
-                          child: Center(
-                            child: Text(
-                              "Delete",
-                              style: GoogleFonts.ibmPlexSans(
-                                color: Colors.white,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
+                    const SizedBox(width: 6),
+                    InkWell(
+                      onTap: () {
+                        Clipboard.setData(
+                          ClipboardData(text: method.accountNumber),
+                        );
+                        HapticFeedback.selectionClick();
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('Account number copied.'),
+                            duration: Duration(seconds: 2),
                           ),
+                        );
+                      },
+                      borderRadius: BorderRadius.circular(6),
+                      child: const Padding(
+                        padding: EdgeInsets.all(3),
+                        child: Icon(
+                          Iconsax.copy,
+                          size: 14,
+                          color: AppColors.textTertiary,
                         ),
                       ),
                     ),
                   ],
                 ),
+                if (!hasQr) ...[
+                  const SizedBox(height: 6),
+                  Row(
+                    children: [
+                      const Icon(
+                        Iconsax.warning_2,
+                        size: 12,
+                        color: AppColors.warning,
+                      ),
+                      const SizedBox(width: 5),
+                      Text(
+                        'No QR code',
+                        style: t.bodySmall?.copyWith(
+                          fontSize: 11,
+                          color: AppColors.warning,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
               ],
             ),
+          ),
+          IconButton(
+            onPressed: onDelete,
+            icon: const Icon(Iconsax.trash, size: 17),
+            color: AppColors.textTertiary,
+            visualDensity: VisualDensity.compact,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _QrThumb extends StatelessWidget {
+  final PaymentMethod method;
+
+  const _QrThumb({required this.method});
+
+  @override
+  Widget build(BuildContext context) {
+    final local = method.localImagePath;
+    final remote = method.qrCodeUrl;
+
+    Widget child;
+    if (local != null) {
+      child = Image.file(File(local), fit: BoxFit.cover);
+    } else if (remote != null && remote.isNotEmpty) {
+      child = Image.network(
+        remote,
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) => const Icon(
+          Iconsax.gallery_slash,
+          size: 18,
+          color: AppColors.textTertiary,
+        ),
+      );
+    } else {
+      child = const Icon(Iconsax.card, size: 20, color: AppColors.textTertiary);
+    }
+
+    return Container(
+      width: 54,
+      height: 54,
+      decoration: BoxDecoration(
+        color: AppColors.surfaceAlt,
+        borderRadius: BorderRadius.circular(AppTheme.radiusSm),
+      ),
+      clipBehavior: Clip.antiAlias,
+      alignment: Alignment.center,
+      child: child,
+    );
+  }
+}
+
+// ── Sheet ─────────────────────────────────────────────────────────────────
+
+class _MethodSheet extends StatefulWidget {
+  final PaymentMethod? existing;
+
+  const _MethodSheet({this.existing});
+
+  @override
+  State<_MethodSheet> createState() => _MethodSheetState();
+}
+
+class _MethodSheetState extends State<_MethodSheet> {
+  final _formKey = GlobalKey<FormState>();
+  late final TextEditingController _bank;
+  late final TextEditingController _accountName;
+  late final TextEditingController _accountNumber;
+
+  String? _localImage;
+  String? _existingQr;
+
+  @override
+  void initState() {
+    super.initState();
+    final e = widget.existing;
+    _bank = TextEditingController(text: e?.bankName ?? '');
+    _accountName = TextEditingController(text: e?.accountName ?? '');
+    _accountNumber = TextEditingController(text: e?.accountNumber ?? '');
+    _localImage = e?.localImagePath;
+    _existingQr = e?.qrCodeUrl;
+  }
+
+  @override
+  void dispose() {
+    _bank.dispose();
+    _accountName.dispose();
+    _accountNumber.dispose();
+    super.dispose();
+  }
+
+  Future<void> _pickQr() async {
+    try {
+      final picked = await ImagePicker().pickImage(
+        source: ImageSource.gallery,
+        imageQuality: 80,
+      );
+      if (picked != null && mounted) {
+        setState(() => _localImage = picked.path);
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Could not open the gallery. Check permissions.'),
+          ),
+        );
+      }
+    }
+  }
+
+  void _submit() {
+    if (!(_formKey.currentState?.validate() ?? false)) return;
+
+    Navigator.pop(
+      context,
+      PaymentMethod(
+        // An empty id tells the server this is new; an existing one is carried
+        // through so the row is updated rather than replaced.
+        id: widget.existing?.id ?? '',
+        bankName: _bank.text.trim(),
+        accountName: _accountName.text.trim(),
+        accountNumber: _accountNumber.text.trim(),
+        qrCodeUrl: _existingQr,
+        localImagePath: _localImage,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = Theme.of(context).textTheme;
+    final isEdit = widget.existing != null;
+
+    return Padding(
+      padding: EdgeInsets.only(
+        left: 20,
+        right: 20,
+        top: 8,
+        bottom: MediaQuery.of(context).viewInsets.bottom + 20,
+      ),
+      child: SingleChildScrollView(
+        child: Form(
+          key: _formKey,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                isEdit ? 'Edit payment method' : 'Add payment method',
+                style: t.titleLarge,
+              ),
+              const SizedBox(height: 16),
+              TextFormField(
+                controller: _bank,
+                textInputAction: TextInputAction.next,
+                decoration: const InputDecoration(
+                  labelText: 'Bank or wallet',
+                  hintText: 'KBZPay, Wave Money, AYA…',
+                ),
+                validator: (v) =>
+                    (v ?? '').trim().isEmpty ? 'Enter a name' : null,
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: _accountName,
+                textInputAction: TextInputAction.next,
+                textCapitalization: TextCapitalization.words,
+                decoration: const InputDecoration(labelText: 'Account holder'),
+                validator: (v) => (v ?? '').trim().isEmpty
+                    ? 'Enter the account holder'
+                    : null,
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: _accountNumber,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(labelText: 'Account number'),
+                style: const TextStyle(
+                  fontFeatures: [FontFeature.tabularFigures()],
+                ),
+                validator: (v) {
+                  final value = (v ?? '').trim();
+                  if (value.isEmpty) return 'Enter the account number';
+                  // Length rather than a format: wallets and banks in Myanmar
+                  // number differently, and a stricter rule would reject valid
+                  // accounts.
+                  if (value.length < 6) return 'That looks too short';
+                  return null;
+                },
+              ),
+              const SizedBox(height: 16),
+              _QrPicker(
+                localImage: _localImage,
+                existingQr: _existingQr,
+                onPick: _pickQr,
+                onClear: () => setState(() {
+                  _localImage = null;
+                  _existingQr = null;
+                }),
+              ),
+              const SizedBox(height: 18),
+              FilledButton(
+                onPressed: _submit,
+                child: Text(isEdit ? 'Save' : 'Add'),
+              ),
+            ],
           ),
         ),
       ),
     );
   }
+}
 
-  String _formatCardNumber(String number) {
-    if (number.length > 4) {
-      return number.replaceAllMapped(
-        RegExp(r".{4}"),
-        (match) => "${match.group(0)} ",
-      );
-    }
-    return number;
+class _QrPicker extends StatelessWidget {
+  final String? localImage;
+  final String? existingQr;
+  final VoidCallback onPick;
+  final VoidCallback onClear;
+
+  const _QrPicker({
+    required this.localImage,
+    required this.existingQr,
+    required this.onPick,
+    required this.onClear,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = Theme.of(context).textTheme;
+    final has =
+        localImage != null || (existingQr != null && existingQr!.isNotEmpty);
+
+    return AppCard(
+      onTap: onPick,
+      radius: AppTheme.radiusMd,
+      showShadow: false,
+      padding: const EdgeInsets.all(12),
+      tone: has ? SurfaceTone.plain : SurfaceTone.wash,
+      washColor: AppColors.surfaceAlt,
+      child: Row(
+        children: [
+          _QrThumb(
+            method: PaymentMethod(
+              id: '',
+              bankName: '',
+              accountName: '',
+              accountNumber: '',
+              qrCodeUrl: existingQr,
+              localImagePath: localImage,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  has ? 'QR code attached' : 'Add a QR code',
+                  style: t.bodyLarge?.copyWith(
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                Text(
+                  // Says why it is worth attaching rather than just offering
+                  // the control: a QR is the difference between a user typing
+                  // an account number and scanning it.
+                  has
+                      ? 'Tap to replace'
+                      : 'Users scan it instead of typing the number',
+                  style: t.bodySmall,
+                ),
+              ],
+            ),
+          ),
+          if (has)
+            IconButton(
+              onPressed: onClear,
+              icon: const Icon(Iconsax.close_circle, size: 18),
+              color: AppColors.textTertiary,
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Bottom bar ────────────────────────────────────────────────────────────
+
+class _BottomBar extends StatelessWidget {
+  final int count;
+  final bool dirty;
+  final bool saving;
+  final VoidCallback onAdd;
+  final VoidCallback onSave;
+
+  const _BottomBar({
+    required this.count,
+    required this.dirty,
+    required this.saving,
+    required this.onAdd,
+    required this.onSave,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = Theme.of(context).textTheme;
+
+    return Container(
+      width: double.infinity,
+      decoration: const BoxDecoration(
+        color: AppColors.surface,
+        border: Border(top: BorderSide(color: AppColors.border)),
+      ),
+      child: SafeArea(
+        top: false,
+        minimum: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+        child: Row(
+          children: [
+            Expanded(
+              child: OutlinedButton.icon(
+                onPressed: onAdd,
+                icon: const Icon(Iconsax.add, size: 17),
+                label: const Text('Add'),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              flex: 2,
+              child: FilledButton(
+                // Disabled until something changes: the save posts the whole
+                // list, and re-posting an unchanged one is a pointless upload
+                // of every QR image.
+                onPressed: dirty && !saving ? onSave : null,
+                child: saving
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: AppColors.textOnAccent,
+                        ),
+                      )
+                    : Text(
+                        dirty
+                            ? 'Save $count method${count == 1 ? '' : 's'}'
+                            : 'Saved',
+                        style: t.bodyLarge?.copyWith(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w700,
+                          color: dirty
+                              ? AppColors.textOnAccent
+                              : AppColors.textTertiary,
+                        ),
+                      ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }

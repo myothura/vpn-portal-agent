@@ -132,11 +132,14 @@ class _ProfileViewState extends State<_ProfileView> {
     context.read<ProfileBloc>().add(ProfileTelegramUpdated(value));
   }
 
-  void _open(Widget screen) {
-    Navigator.of(
+  /// Returns whatever the pushed screen popped with. Payment methods pop true
+  /// after saving; the count shown here comes from the profile payload and
+  /// would otherwise stay stale until the next pull to refresh.
+  Future<T?> _open<T>(Widget screen) {
+    return Navigator.of(
       context,
       rootNavigator: true,
-    ).push(AppTransitions.slide(screen));
+    ).push<T>(AppTransitions.slide(screen));
   }
 
   @override
@@ -219,9 +222,14 @@ class _ProfileViewState extends State<_ProfileView> {
                   subtitleColor: user.paymentMethods.isEmpty
                       ? AppColors.danger
                       : null,
-                  onTap: () => _open(
-                    ManagePaymentScreen(initialMethods: user.paymentMethods),
-                  ),
+                  onTap: () async {
+                    final saved = await _open<bool>(
+                      ManagePaymentScreen(initialMethods: user.paymentMethods),
+                    );
+                    if (saved == true && context.mounted) {
+                      context.read<ProfileBloc>().add(ProfileRefreshed());
+                    }
+                  },
                 ),
                 if (user.canSendNoti || user.canManageAgents) ...[
                   const SizedBox(height: 20),
