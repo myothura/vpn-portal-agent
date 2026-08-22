@@ -68,7 +68,11 @@ class _MyAppState extends State<MyApp> {
   Future<void> _setupFirebaseMessaging() async {
     final messaging = FirebaseMessaging.instance;
 
-    await messaging.requestPermission(alert: true, badge: true, sound: true);
+    // Permission is requested once, in NotificationService.initialize(), which
+    // owns notifications. Asking here too raced with it — firebase_messaging
+    // throws "a request for permissions is already running", which stranded
+    // AuthCheckScreen on the splash. The race only surfaced once the awaited
+    // RemoteConfig fetch shifted startup timing.
 
     // App in foreground - show nothing, chat auto-refreshes
     FirebaseMessaging.onMessage.listen((RemoteMessage message) {

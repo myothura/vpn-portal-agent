@@ -21,10 +21,16 @@ class _AuthCheckScreenState extends State<AuthCheckScreen> {
   }
 
   Future<void> _initializeApp() async {
-    // 1. Initialize notification channels (no API calls yet)
-    print("🚀 Initializing Notification Service...");
-    await NotificationService.initialize();
-    print("✅ Notification Service Initialized");
+    // 1. Initialize notification channels (no API calls yet).
+    // Guarded: notification setup is not worth blocking startup for. Without
+    // this, any throw here leaves the user on the splash screen forever.
+    try {
+      print("🚀 Initializing Notification Service...");
+      await NotificationService.initialize();
+      print("✅ Notification Service Initialized");
+    } catch (e) {
+      debugPrint("Notification init failed (continuing): $e");
+    }
 
     // 2. Loading
     await Future.delayed(const Duration(seconds: 2));
