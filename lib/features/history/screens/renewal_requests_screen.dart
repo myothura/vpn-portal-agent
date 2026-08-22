@@ -5,11 +5,14 @@ import 'package:flutter/services.dart';
 import 'package:iconsax/iconsax.dart';
 import 'package:intl/intl.dart';
 
+import 'package:flutter_bloc/flutter_bloc.dart';
+
 import 'package:vpn_agent_app/core/services/agent_realtime_service.dart';
 import 'package:vpn_agent_app/core/theme/app_colors.dart';
 import 'package:vpn_agent_app/core/theme/app_theme.dart';
 import 'package:vpn_agent_app/shared_widgets/ui/app_surface.dart';
 
+import 'package:vpn_agent_app/features/dashboard/bloc/dashboard_bloc.dart';
 import 'package:vpn_agent_app/features/history/models/renewal_request_model.dart';
 import 'package:vpn_agent_app/features/history/services/renewal_service.dart';
 
@@ -136,8 +139,19 @@ class _RenewalRequestsScreenState extends State<RenewalRequestsScreen> {
     if (p.pixels >= p.maxScrollExtent - 600) _loadMore();
   }
 
+  /// Pulls the nav badge back in step with this screen.
+  ///
+  /// The badge reads DashboardBloc, which polls every 30 seconds, so approving
+  /// a request cleared it from the list while the count above kept the old
+  /// number for up to half a minute.
+  void _refreshBadge() {
+    if (!mounted) return;
+    context.read<DashboardBloc>().add(DashboardRefreshed());
+  }
+
   void _onNewRequest(Map<String, dynamic> _) {
     if (!mounted) return;
+    _refreshBadge();
     // Refetched rather than inserted: the counts and the estimated cost are
     // computed server-side, and a locally-built row would be missing both.
     _load(refresh: true);
@@ -204,7 +218,10 @@ class _RenewalRequestsScreenState extends State<RenewalRequestsScreen> {
     setState(() => _busyIds.remove(request.id));
 
     _toast(ok ? 'Request approved.' : 'Could not approve. Check your balance.');
-    if (ok) _load(refresh: true);
+    if (ok) {
+      _load(refresh: true);
+      _refreshBadge();
+    }
   }
 
   Future<void> _reject(RenewalRequest request) async {
@@ -267,7 +284,10 @@ class _RenewalRequestsScreenState extends State<RenewalRequestsScreen> {
     setState(() => _busyIds.remove(request.id));
 
     _toast(ok ? 'Request rejected.' : 'Could not reject the request.');
-    if (ok) _load(refresh: true);
+    if (ok) {
+      _load(refresh: true);
+      _refreshBadge();
+    }
   }
 
   Future<bool?> _confirm({
