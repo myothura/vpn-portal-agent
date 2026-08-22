@@ -1,281 +1,230 @@
-import 'package:vpn_agent_app/core/services/agent_realtime_service.dart';
 import 'dart:async';
 import 'dart:io';
-import 'dart:ui' as ui;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_screenutil/flutter_screenutil.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:iconsax/iconsax.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
-import 'package:vpn_agent_app/core/theme/app_colors.dart';
-import 'package:vpn_agent_app/features/chat/services/agent_chat_service.dart';
+
 import 'package:vpn_agent_app/core/api/api_config.dart';
+import 'package:vpn_agent_app/core/services/agent_realtime_service.dart';
+import 'package:vpn_agent_app/core/theme/app_colors.dart';
+import 'package:vpn_agent_app/core/theme/app_theme.dart';
+import 'package:vpn_agent_app/shared_widgets/ui/app_surface.dart';
 
-class LiquidGlassContainer extends StatelessWidget {
-  final Widget child;
-  final double blurSigma;
-  final double opacity;
-  final BorderRadius borderRadius;
-  final EdgeInsetsGeometry padding;
-  final Color? tintColor;
-  final bool withBorder;
-  final VoidCallback? onTap;
-
-  const LiquidGlassContainer({
-    super.key,
-    required this.child,
-    this.blurSigma = 20.0,
-    this.opacity = 0.1,
-    this.borderRadius = const BorderRadius.all(Radius.circular(24)),
-    this.padding = EdgeInsets.zero,
-    this.tintColor,
-    this.withBorder = true,
-    this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final content = ClipRRect(
-      borderRadius: borderRadius,
-      child: BackdropFilter(
-        filter: ui.ImageFilter.blur(sigmaX: blurSigma, sigmaY: blurSigma),
-        child: Container(
-          padding: padding,
-          decoration: BoxDecoration(
-            color: (tintColor ?? Colors.white).withOpacity(opacity * 0.5),
-            borderRadius: borderRadius,
-            border: withBorder
-                ? Border.all(color: Colors.white.withOpacity(0.2), width: 0.5)
-                : null,
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [
-                (tintColor ?? Colors.white).withOpacity(opacity + 0.1),
-                (tintColor ?? Colors.white).withOpacity(opacity * 0.3),
-              ],
-              stops: const [0.0, 1.0],
-            ),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.15),
-                blurRadius: 30,
-                spreadRadius: -2,
-                offset: const Offset(0, 15),
-              ),
-            ],
-          ),
-          child: child,
-        ),
-      ),
-    );
-
-    return onTap != null
-        ? GestureDetector(onTap: onTap, child: content)
-        : content;
-  }
-}
-
-class ScaleButton extends StatefulWidget {
-  final Widget child;
-  final VoidCallback? onTap;
-  final Duration duration;
-  final double scaleAmount;
-
-  const ScaleButton({
-    super.key,
-    required this.child,
-    required this.onTap,
-    this.duration = const Duration(milliseconds: 150),
-    this.scaleAmount = 0.95,
-  });
-
-  @override
-  State<ScaleButton> createState() => _ScaleButtonState();
-}
-
-class _ScaleButtonState extends State<ScaleButton>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _controller;
-  late final Animation<double> _scaleAnimation;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = AnimationController(vsync: this, duration: widget.duration);
-    _scaleAnimation = Tween<double>(
-      begin: 1.0,
-      end: widget.scaleAmount,
-    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeInOut));
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTapDown: (_) => _controller.forward(),
-      onTapUp: (_) => _controller.reverse(),
-      onTapCancel: () => _controller.reverse(),
-      onTap: () {
-        widget.onTap?.call();
-        HapticFeedback.lightImpact();
-      },
-      child: ScaleTransition(scale: _scaleAnimation, child: widget.child),
-    );
-  }
-}
+import 'package:vpn_agent_app/features/chat/services/agent_chat_service.dart';
 
 class AgentChatDetailScreen extends StatefulWidget {
   final int userId;
   final String username;
-  final bool isAdmin;
 
   const AgentChatDetailScreen({
     super.key,
     required this.userId,
     required this.username,
-    this.isAdmin = true,
   });
 
   @override
   State<AgentChatDetailScreen> createState() => _AgentChatDetailScreenState();
 }
 
-class _AgentChatDetailScreenState extends State<AgentChatDetailScreen>
-    with TickerProviderStateMixin {
-  final AgentChatService _chatService = AgentChatService();
-  final TextEditingController _msgController = TextEditingController();
-  final FocusNode _focusNode = FocusNode();
-  final ScrollController _scrollController = ScrollController();
+class _AgentChatDetailScreenState extends State<AgentChatDetailScreen> {
+  final _chatService = AgentChatService();
+  final _msgController = TextEditingController();
+  final _focusNode = FocusNode();
+  final _scrollController = ScrollController();
 
   Map<String, dynamic>? _userInfo;
   List<Map<String, dynamic>> _messages = [];
   File? _selectedImage;
+
   bool _loading = true;
-  bool _showScrollDown = false;
-  Timer? _pollingTimer;
-  late AnimationController _breathingController;
+  bool _showJumpToLatest = false;
+  double _lastKeyboardInset = 0;
+
+  /// Typing indicator, expired locally. There is no "stopped typing" event —
+  /// an app closed mid-sentence would never send one — so the dots time out
+  /// a few seconds after the last signal instead.
+  bool _userTyping = false;
+  Timer? _typingTimer;
 
   @override
   void initState() {
     super.initState();
-    _breathingController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 1500),
-    )..repeat(reverse: true);
+    _scrollController.addListener(_onScroll);
 
-    _scrollController.addListener(() {
-      if (!_scrollController.hasClients) return;
-      final show =
-          _scrollController.position.pixels <
-          _scrollController.position.maxScrollExtent - 200;
-      if (show != _showScrollDown) setState(() => _showScrollDown = show);
+    // Focusing the field shrinks the viewport by the keyboard's height. The
+    // list keeps its scroll offset, so the newest message slides out of sight
+    // and the agent has to drag down to see what they are replying to.
+    _focusNode.addListener(() {
+      if (_focusNode.hasFocus) _scrollToBottom();
     });
 
-    _loadMessages();
-    _pollingTimer = Timer.periodic(
-      const Duration(seconds: 6),
-      (_) => _loadMessages(silent: true),
-    );
-
+    // No polling timer. Every message this thread can receive is broadcast:
+    // the user's own (ChatController), the agent's replies including those
+    // sent from another device (AgentChatController::reply), and the AI's
+    // (AiChatController). The old screen refetched the whole history every 6
+    // seconds — roughly 600 requests an hour with a chat left open — because
+    // its socket handler discarded everything that was not sender_type 'user'.
     AgentRealtimeService.instance.start();
     AgentRealtimeService.instance.addListener(_onRealtimeMessage);
+    AgentRealtimeService.instance.addReadListener(_onRead);
+    AgentRealtimeService.instance.addTypingListener(_onTyping);
+
+    _loadMessages();
   }
 
   @override
   void dispose() {
     AgentRealtimeService.instance.removeListener(_onRealtimeMessage);
-    _breathingController.dispose();
-    _pollingTimer?.cancel();
+    AgentRealtimeService.instance.removeReadListener(_onRead);
+    AgentRealtimeService.instance.removeTypingListener(_onTyping);
+    _typingTimer?.cancel();
     _msgController.dispose();
     _focusNode.dispose();
     _scrollController.dispose();
     super.dispose();
   }
 
-  void _onRealtimeMessage(Map<String, dynamic> msg) {
-    if (!mounted) return;
-    final dynamic uid = msg['vpn_user_id'];
-    final int? uidInt = uid is int ? uid : int.tryParse(uid?.toString() ?? '');
-    if (uidInt != widget.userId) return;
-    // Render incoming USER messages live; own replies + AI handled by
-    // optimistic send + the silent poll reload.
-    if (msg['sender_type'] != 'user') return;
-    final dynamic mid = msg['id'];
-    if (_messages.any((m) => m['id'] == mid)) return;
-    bool atBottom = false;
-    if (_scrollController.hasClients) {
-      atBottom = _scrollController.position.pixels >=
-          _scrollController.position.maxScrollExtent - 150;
-    }
-    setState(() => _messages.add(Map<String, dynamic>.from(msg)));
-    if (atBottom) _scrollToBottom();
+  // ── Scroll ──────────────────────────────────────────────────────────────
+
+  void _onScroll() {
+    if (!_scrollController.hasClients) return;
+    final show =
+        _scrollController.position.pixels <
+        _scrollController.position.maxScrollExtent - 250;
+    if (show != _showJumpToLatest) setState(() => _showJumpToLatest = show);
   }
 
-  Future<void> _loadMessages({bool silent = false}) async {
-    if (!silent) setState(() => _loading = true);
-    final result = await _chatService.getHistory(widget.userId);
-
-    if (!mounted) return;
-
-    if (result != null) {
-      bool isAtBottom = false;
-      if (_scrollController.hasClients) {
-        isAtBottom =
-            _scrollController.position.pixels >=
-            _scrollController.position.maxScrollExtent - 150;
-      }
-
-      setState(() {
-        _userInfo = result['user'] != null
-            ? Map<String, dynamic>.from(result['user'])
-            : null;
-        _messages =
-            (result['messages'] as List?)
-                ?.map((e) => Map<String, dynamic>.from(e))
-                .toList() ??
-            [];
-        _loading = false;
-      });
-
-      if (!silent || isAtBottom) {
-        _scrollToBottom();
-      }
-    } else {
-      setState(() => _loading = false);
-    }
+  bool get _isAtBottom {
+    if (!_scrollController.hasClients) return true;
+    return _scrollController.position.pixels >=
+        _scrollController.position.maxScrollExtent - 150;
   }
 
-  void _scrollToBottom() {
+  void _scrollToBottom({bool animate = true}) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_scrollController.hasClients) {
+      if (!_scrollController.hasClients) return;
+      final target = _scrollController.position.maxScrollExtent;
+      if (animate) {
         _scrollController.animateTo(
-          _scrollController.position.maxScrollExtent,
-          duration: const Duration(milliseconds: 300),
+          target,
+          duration: const Duration(milliseconds: 250),
           curve: Curves.easeOut,
         );
+      } else {
+        _scrollController.jumpTo(target);
       }
     });
   }
 
-  // UPDATED: Optimistic UI with Failure Handling
-  void _sendReply() {
-    final text = _msgController.text.trim();
-    final img = _selectedImage;
+  // ── Data ────────────────────────────────────────────────────────────────
 
-    if (text.isEmpty && img == null) return;
+  void _onRealtimeMessage(Map<String, dynamic> msg) {
+    if (!mounted) return;
+
+    final raw = msg['vpn_user_id'];
+    final userId = raw is int ? raw : int.tryParse(raw?.toString() ?? '');
+    if (userId != widget.userId) return;
+
+    // Every sender is rendered, not just the user. Agent replies from another
+    // device and AI answers arrive on this channel too; ignoring them was what
+    // made the 6-second poll necessary.
+    final id = msg['id'];
+    if (id != null && _messages.any((m) => m['id'] == id)) return;
+
+    // An optimistic copy of this same reply may still be on screen. Matched on
+    // text and sender so the real row replaces it rather than doubling it.
+    final text = (msg['message'] ?? '').toString();
+    if (msg['sender_type'] == 'admin' && text.isNotEmpty) {
+      final pending = _messages.indexWhere(
+        (m) => m['_sending'] == true && (m['message'] ?? '') == text,
+      );
+      if (pending != -1) {
+        setState(() => _messages[pending] = Map<String, dynamic>.from(msg));
+        return;
+      }
+    }
+
+    final atBottom = _isAtBottom;
+    setState(() => _messages.add(Map<String, dynamic>.from(msg)));
+    if (atBottom) _scrollToBottom();
+  }
+
+  void _onRead(Map<String, dynamic> data) {
+    if (!mounted) return;
+    if (_idOf(data['vpn_user_id']) != widget.userId) return;
+
+    // up_to_id bounds the range when the client reported one; without it the
+    // user opened the thread, which means everything sent so far is read.
+    final upTo = _idOf(data['up_to_id']);
+
+    setState(() {
+      for (final m in _messages) {
+        if (m['sender_type'] != 'admin') continue;
+        if (m['is_read'] == true) continue;
+        final id = _idOf(m['id']);
+        if (upTo != null && id != null && id > upTo) continue;
+        m['is_read'] = true;
+      }
+    });
+  }
+
+  void _onTyping(Map<String, dynamic> data) {
+    if (!mounted) return;
+    if (_idOf(data['vpn_user_id']) != widget.userId) return;
+
+    final wasAtBottom = _isNearBottom;
+    if (!_userTyping) setState(() => _userTyping = true);
+
+    _typingTimer?.cancel();
+    _typingTimer = Timer(const Duration(seconds: 4), () {
+      if (mounted) setState(() => _userTyping = false);
+    });
+
+    if (wasAtBottom) _scrollToBottom();
+  }
+
+  static int? _idOf(dynamic raw) =>
+      raw is int ? raw : int.tryParse(raw?.toString() ?? '');
+
+  Future<void> _loadMessages({bool silent = false}) async {
+    if (!silent) setState(() => _loading = true);
+
+    final result = await _chatService.getHistory(widget.userId);
+    if (!mounted) return;
+
+    if (result == null) {
+      setState(() => _loading = false);
+      return;
+    }
+
+    final atBottom = _isAtBottom;
+    setState(() {
+      _userInfo = result['user'] != null
+          ? Map<String, dynamic>.from(result['user'])
+          : null;
+      _messages =
+          (result['messages'] as List?)
+              ?.map((e) => Map<String, dynamic>.from(e))
+              .toList() ??
+          [];
+      _loading = false;
+    });
+
+    if (!silent || atBottom) _scrollToBottom(animate: silent);
+  }
+
+  // ── Sending ─────────────────────────────────────────────────────────────
+
+  Future<void> _send() async {
+    final text = _msgController.text.trim();
+    final image = _selectedImage;
+    if (text.isEmpty && image == null) return;
 
     _msgController.clear();
-    final tempId =
-        DateTime.now().millisecondsSinceEpoch; // Temporary ID for rollback
+    final tempId = -DateTime.now().millisecondsSinceEpoch;
 
     setState(() {
       _selectedImage = null;
@@ -283,1891 +232,1640 @@ class _AgentChatDetailScreenState extends State<AgentChatDetailScreen>
         'id': tempId,
         'sender_type': 'admin',
         'message': text,
-        'image_url': img?.path,
+        'image_url': image?.path,
         'type': 'text',
         'is_read': false,
-        'created_at': 'Sending...',
+        'created_at': DateTime.now().toIso8601String(),
         '_sending': true,
-        '_is_local_image': img != null,
+        '_is_local_image': image != null,
       });
     });
-
     _scrollToBottom();
 
-    _chatService
-        .sendReply(widget.userId, message: text, image: img)
-        .then((result) {
-          if (mounted) {
-            if (result == null || result['success'] == false) {
-              // Fail Case: Remove temp message and show error
-              setState(() {
-                _messages.removeWhere((m) => m['id'] == tempId);
-              });
-              _showGlassSnackBar(
-                "Failed to send message. Please try again.",
-                isError: true,
-              );
-            } else {
-              // Success Case: Reload real data
-              _loadMessages(silent: true);
-            }
-          }
-        })
-        .catchError((error) {
-          if (mounted) {
-            setState(() {
-              _messages.removeWhere((m) => m['id'] == tempId);
-            });
-            _showGlassSnackBar(
-              "Network error. Message not sent.",
-              isError: true,
-            );
+    try {
+      final result = await _chatService.sendReply(
+        widget.userId,
+        message: text,
+        image: image,
+      );
+      if (!mounted) return;
+
+      if (result == null || result['success'] == false) {
+        // A failed message is kept and flagged rather than removed, so the
+        // agent can see what did not go and copy the text back out.
+        setState(() {
+          final i = _messages.indexWhere((m) => m['id'] == tempId);
+          if (i != -1) {
+            _messages[i]['_sending'] = false;
+            _messages[i]['_failed'] = true;
           }
         });
+        _toast('Message not sent.');
+        return;
+      }
+
+      // The broadcast usually lands first and swaps the optimistic copy for
+      // the real row. This clears the spinner if it has not.
+      setState(() {
+        final i = _messages.indexWhere((m) => m['id'] == tempId);
+        if (i == -1) return;
+        final real = result['data'];
+        _messages[i] = real is Map
+            ? Map<String, dynamic>.from(real)
+            : {..._messages[i], '_sending': false};
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        final i = _messages.indexWhere((m) => m['id'] == tempId);
+        if (i != -1) {
+          _messages[i]['_sending'] = false;
+          _messages[i]['_failed'] = true;
+        }
+      });
+      _toast('Network error. Message not sent.');
+    }
   }
 
-  // UPDATED: Image Picker with Permission Error Catching
   Future<void> _pickImage() async {
     try {
-      final p = await ImagePicker().pickImage(
+      final picked = await ImagePicker().pickImage(
         source: ImageSource.gallery,
         imageQuality: 70,
       );
-      if (p != null) setState(() => _selectedImage = File(p.path));
-    } catch (e) {
-      _showGlassSnackBar(
-        "Failed to pick image. Please allow gallery access.",
-        isError: true,
-      );
+      if (picked != null && mounted) {
+        setState(() => _selectedImage = File(picked.path));
+      }
+    } catch (_) {
+      if (mounted) {
+        _toast('Could not open the gallery. Check the app permissions.');
+      }
     }
   }
+
+  // ── Actions ─────────────────────────────────────────────────────────────
 
   Future<void> _sendPlanCard() async {
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => _buildConfirmDialog(
-        "Plan Card",
-        "Send plan options to this user?",
-        icon: Iconsax.card,
-      ),
+    final ok = await _confirm(
+      title: 'Send plan options?',
+      body:
+          '${widget.username} will see the available plans and can renew '
+          'straight from the message.',
+      actionLabel: 'Send',
+      actionColor: AppColors.accentInk,
     );
-    if (confirm == true) {
-      await _chatService.sendPlanCard(widget.userId);
-      if (mounted) _loadMessages(silent: true);
-    }
+    if (ok != true) return;
+
+    await _chatService.sendPlanCard(widget.userId);
+    if (mounted) _loadMessages(silent: true);
   }
 
-  void _openExtendDialog() {
-    showDialog(
+  Future<void> _openExtendSheet() async {
+    final result = await showModalBottomSheet<Map<String, dynamic>>(
       context: context,
-      builder: (ctx) => _ExtendDialog(
-        userId: widget.userId,
-        userInfo: _userInfo ?? {},
-        chatService: _chatService,
-        onSuccess: (msg) {
-          _showGlassSnackBar(msg, isSuccess: true);
-          _loadMessages(silent: true);
-        },
-        onError: (msg) {
-          _showGlassSnackBar(msg, isError: true);
-        },
+      isScrollControlled: true,
+      builder: (_) => _ExtendSheet(
+        username: widget.username,
+        planPrice:
+            int.tryParse(_userInfo?['plan_price']?.toString() ?? '0') ?? 0,
       ),
     );
-  }
+    if (result == null || !mounted) return;
 
-  Future<void> _approveRequest(int reqId) async {
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => _buildConfirmDialog(
-        "Approve",
-        "Approve this renewal request?",
-        isApprove: true,
-        icon: Iconsax.tick_circle,
-      ),
+    final response = await _chatService.extendSubscription(
+      widget.userId,
+      result['months'] as int,
+      result['days'] as int,
     );
-    if (confirm == true) {
-      final result = await _chatService.approveRequest(reqId);
-      if (mounted) {
-        if (result['success'] == true) {
-          _showGlassSnackBar(result['message'] ?? '', isSuccess: true);
-        } else {
-          _showGlassSnackBar(result['message'] ?? '', isError: true);
-        }
-        _loadMessages(silent: true);
-      }
-    }
-  }
+    if (!mounted) return;
 
-  Future<void> _rejectRequest(int reqId) async {
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => _buildConfirmDialog(
-        "Reject",
-        "Reject this renewal request?",
-        isDanger: true,
-        icon: Iconsax.close_circle,
-      ),
+    _toast(
+      response?['message']?.toString() ??
+          (response == null ? 'Could not extend.' : 'Subscription extended.'),
     );
-    if (confirm == true) {
-      final result = await _chatService.rejectRequest(reqId);
-      if (mounted) {
-        _showGlassSnackBar(result['message'] ?? '', isError: true);
-        _loadMessages(silent: true);
-      }
-    }
+    _loadMessages(silent: true);
   }
 
-  void _showGlassSnackBar(
-    String message, {
-    bool isError = false,
-    bool isSuccess = false,
+  Future<void> _approve(int reqId) async {
+    final ok = await _confirm(
+      title: 'Approve this request?',
+      body: 'Credit will be deducted from your balance.',
+      actionLabel: 'Approve',
+      actionColor: AppColors.accentInk,
+    );
+    if (ok != true) return;
+
+    final result = await _chatService.approveRequest(reqId);
+    if (!mounted) return;
+    _toast(result['message']?.toString() ?? 'Done.');
+    _loadMessages(silent: true);
+  }
+
+  Future<void> _reject(int reqId) async {
+    final ok = await _confirm(
+      title: 'Reject this request?',
+      body: 'The user will be told it was not approved.',
+      actionLabel: 'Reject',
+      actionColor: AppColors.danger,
+    );
+    if (ok != true) return;
+
+    final result = await _chatService.rejectRequest(reqId);
+    if (!mounted) return;
+    _toast(result['message']?.toString() ?? 'Rejected.');
+    _loadMessages(silent: true);
+  }
+
+  Future<bool?> _confirm({
+    required String title,
+    required String body,
+    required String actionLabel,
+    required Color actionColor,
   }) {
-    final Color iconColor = isError ? Colors.redAccent : AppColors.accentGreen;
-    final IconData icon = isError ? Icons.error_outline : Icons.check_circle;
-    ScaffoldMessenger.of(context)
-      ..clearSnackBars()
-      ..showSnackBar(
-        SnackBar(
-          backgroundColor: Colors.transparent,
-          elevation: 0,
-          behavior: SnackBarBehavior.floating,
-          duration: const Duration(seconds: 3),
-          content: LiquidGlassContainer(
-            opacity: 0.2,
-            blurSigma: 10,
-            tintColor: Colors.black,
-            padding: EdgeInsets.symmetric(horizontal: 16.w, vertical: 12.h),
-            borderRadius: BorderRadius.circular(20),
-            child: Row(
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: iconColor.withOpacity(0.2),
-                  ),
-                  child: Icon(icon, color: iconColor, size: 20.sp),
-                ),
-                SizedBox(width: 10.w),
-                Expanded(
-                  child: Text(
-                    message,
-                    style: GoogleFonts.exo2(
-                      color: Colors.white,
-                      fontSize: 12.sp,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-              ],
-            ),
+    return showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(title),
+        content: Text(body, style: Theme.of(ctx).textTheme.bodyMedium),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
           ),
-        ),
-      );
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: actionColor),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(actionLabel),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _toast(String message) {
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  void _openImage(String url, {bool isLocal = false}) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (_) => _ImageViewer(url: url, isLocal: isLocal),
+      ),
+    );
+  }
+
+  // ── Build ───────────────────────────────────────────────────────────────
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+
+    // The focus listener fires before the keyboard animation reports its
+    // height, so the first scroll lands short. This runs on the inset change
+    // itself, which is the point the viewport is its final size.
+    final inset = MediaQuery.of(context).viewInsets.bottom;
+    if (inset > 0 && inset != _lastKeyboardInset && _isNearBottom) {
+      _scrollToBottom(animate: false);
+    }
+    _lastKeyboardInset = inset;
+  }
+
+  /// Slacker than _isAtBottom: after a send the offset can be a few hundred
+  /// pixels off while the new bubble lays out, and that still counts as
+  /// "reading the end of the thread".
+  bool get _isNearBottom {
+    if (!_scrollController.hasClients) return true;
+    return _scrollController.position.pixels >=
+        _scrollController.position.maxScrollExtent - 400;
   }
 
   @override
   Widget build(BuildContext context) {
+    final isOnline = _userInfo?['is_online'] == true;
+
     return Scaffold(
-      backgroundColor: const Color(0xFF050508),
-      extendBodyBehindAppBar: true,
-      appBar: PreferredSize(
-        preferredSize: const Size.fromHeight(kToolbarHeight),
-        child: ClipRect(
-          child: BackdropFilter(
-            filter: ui.ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-            child: _buildAppBar(),
-          ),
-        ),
-      ),
-      body: Stack(
-        children: [
-          Container(
-            decoration: const BoxDecoration(
-              gradient: LinearGradient(
-                colors: [Color(0xFF050508), Color(0xFF09090C)],
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-              ),
-            ),
-          ),
-          Column(
-            children: [
-              SizedBox(
-                height: MediaQuery.of(context).padding.top + kToolbarHeight,
-              ),
-              if (_userInfo != null) _buildUserInfoBar(),
-              Expanded(
-                child: _loading && _messages.isEmpty
-                    ? Center(
-                        child: FadeTransition(
-                          opacity: _breathingController,
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              LiquidGlassContainer(
-                                opacity: 0.08,
-                                borderRadius: BorderRadius.circular(50),
-                                padding: EdgeInsets.all(20.w),
-                                child: Icon(
-                                  Iconsax.message_text_1,
-                                  color: AppColors.accentGreen,
-                                  size: 32.sp,
-                                ),
-                              ),
-                              SizedBox(height: 16.h),
-                              Text(
-                                "LOADING MESSAGES...",
-                                style: GoogleFonts.exo2(
-                                  color: Colors.white38,
-                                  fontSize: 11.sp,
-                                  letterSpacing: 2.0,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ],
+      backgroundColor: AppColors.background,
+      appBar: AppBar(
+        titleSpacing: 0,
+        title: Row(
+          children: [
+            _Avatar(username: widget.username, isOnline: isOnline, size: 34),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    widget.username,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  Row(
+                    children: [
+                      if (isOnline) ...[
+                        Container(
+                          width: 6,
+                          height: 6,
+                          decoration: const BoxDecoration(
+                            color: AppColors.success,
+                            shape: BoxShape.circle,
                           ),
                         ),
-                      )
-                    : GestureDetector(
-                        onTap: () => _focusNode.unfocus(),
+                        const SizedBox(width: 5),
+                      ],
+                      Flexible(
+                        child: Text(
+                          isOnline
+                              ? 'Online'
+                              : _lastSeen(_userInfo?['last_seen']?.toString()),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.bodySmall
+                              ?.copyWith(
+                                color: isOnline
+                                    ? AppColors.success
+                                    : AppColors.textTertiary,
+                                fontSize: 11,
+                              ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          // Extend is the money action and stays a button; the rest go behind
+          // a menu, so the bar does not turn into a row of glyphs an agent has
+          // to decode mid-conversation.
+          IconButton(
+            onPressed: _openExtendSheet,
+            icon: const Icon(Iconsax.clock, size: 20),
+            tooltip: 'Extend subscription',
+          ),
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.more_vert_rounded, size: 20),
+            position: PopupMenuPosition.under,
+            onSelected: (value) {
+              if (value == 'plan') _sendPlanCard();
+            },
+            itemBuilder: (_) => const [
+              PopupMenuItem(
+                value: 'plan',
+                child: Row(
+                  children: [
+                    Icon(Iconsax.card, size: 17),
+                    SizedBox(width: 10),
+                    Text('Send plan options'),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+      body: Column(
+        children: [
+          if (_userInfo != null) _UserInfoBar(info: _userInfo!),
+          Expanded(
+            child: _loading
+                ? const AppLoader()
+                : _messages.isEmpty
+                ? const AppEmptyState(
+                    icon: Iconsax.message_text,
+                    title: 'No messages yet',
+                    subtitle: 'Anything you send appears here.',
+                  )
+                : Stack(
+                    children: [
+                      // Tapping the thread dismisses the keyboard. Without it
+                      // the only way out is the system back gesture, which on
+                      // Android also risks leaving the screen.
+                      GestureDetector(
+                        onTap: () => FocusScope.of(context).unfocus(),
+                        behavior: HitTestBehavior.opaque,
                         child: ListView.builder(
                           controller: _scrollController,
-                          // UPDATED: Added bottom padding so the input box doesn't cover messages
-                          padding: EdgeInsets.only(
-                            left: 16.w,
-                            right: 16.w,
-                            top: 10.h,
-                            bottom: 140.h,
-                          ),
-                          itemCount: _messages.length,
-                          itemBuilder: (context, index) =>
-                              _buildMessage(_messages[index]),
+                          padding: const EdgeInsets.fromLTRB(12, 12, 12, 16),
+                          physics: const BouncingScrollPhysics(),
+                          itemCount: _messages.length + (_userTyping ? 1 : 0),
+                          itemBuilder: (context, i) {
+                            if (i == _messages.length)
+                              return const _TypingBubble();
+                            final msg = _messages[i];
+                            final prev = i > 0 ? _messages[i - 1] : null;
+                            final next = i + 1 < _messages.length
+                                ? _messages[i + 1]
+                                : null;
+                            return _MessageBubble(
+                              msg: msg,
+                              // Consecutive messages from one sender are drawn
+                              // as a run: only the last keeps a tail and a
+                              // timestamp. A column of identical bubbles each
+                              // with its own time reads as noise.
+                              isFirstInRun: _startsRun(prev, msg),
+                              isLastInRun: _startsRun(msg, next),
+                              // A date separator whenever the day changes, so a
+                              // thread months long can be placed in time without
+                              // opening each timestamp.
+                              showDaySeparator: _isNewDay(prev, msg),
+                              onApprove: _approve,
+                              onReject: _reject,
+                              onOpenImage: _openImage,
+                            );
+                          },
                         ),
                       ),
-              ),
-              if (_selectedImage != null) _buildImagePreview(),
-            ],
-          ),
-          // Input Bar is Positioned to overlay on the list bottom padding smoothly
-          Positioned(bottom: 0, left: 0, right: 0, child: _buildInputBar()),
-          if (_showScrollDown)
-            Positioned(
-              bottom: 130.h,
-              right: 16.w,
-              child: ScaleButton(
-                onTap: _scrollToBottom,
-                child: LiquidGlassContainer(
-                  opacity: 0.2,
-                  blurSigma: 15,
-                  tintColor: AppColors.accentGreen,
-                  borderRadius: BorderRadius.circular(50),
-                  padding: EdgeInsets.all(10.w),
-                  child: Icon(
-                    Iconsax.arrow_down_1,
-                    color: AppColors.accentGreen,
-                    size: 18.sp,
-                  ),
-                ),
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildAppBar() {
-    final isOnline = _userInfo?['is_online'] == true;
-    return AppBar(
-      backgroundColor: const Color(0xFF050508).withOpacity(0.7),
-      elevation: 0,
-      leading: ScaleButton(
-        onTap: () => Navigator.pop(context),
-        child: Padding(
-          padding: EdgeInsets.all(12.w),
-          child: LiquidGlassContainer(
-            opacity: 0.08,
-            blurSigma: 10,
-            borderRadius: BorderRadius.circular(50),
-            withBorder: false,
-            child: Icon(
-              Iconsax.arrow_left_2,
-              color: Colors.white70,
-              size: 18.sp,
-            ),
-          ),
-        ),
-      ),
-      titleSpacing: 0,
-      title: Row(
-        children: [
-          Stack(
-            children: [
-              Container(
-                padding: EdgeInsets.all(2.w),
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  gradient: LinearGradient(
-                    colors: [
-                      AppColors.accentGreen.withOpacity(0.4),
-                      AppColors.accentGreen.withOpacity(0.1),
-                    ],
-                  ),
-                ),
-                child: CircleAvatar(
-                  radius: 18.w,
-                  backgroundColor: AppColors.accentGreen.withOpacity(0.15),
-                  child: Text(
-                    widget.username.isNotEmpty
-                        ? widget.username[0].toUpperCase()
-                        : '?',
-                    style: GoogleFonts.exo2(
-                      color: AppColors.accentGreen,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 16.sp,
-                    ),
-                  ),
-                ),
-              ),
-              if (isOnline)
-                Positioned(
-                  bottom: 0,
-                  right: 0,
-                  child: Container(
-                    width: 10.w,
-                    height: 10.w,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: AppColors.accentGreen,
-                      border: Border.all(
-                        color: const Color(0xFF09090C),
-                        width: 2,
-                      ),
-                    ),
-                  ),
-                ),
-            ],
-          ),
-          SizedBox(width: 12.w),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  widget.username,
-                  style: GoogleFonts.exo2(
-                    color: Colors.white,
-                    fontSize: 15.sp,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                Text(
-                  isOnline ? "Online" : (_userInfo?['last_seen'] ?? 'Offline'),
-                  style: GoogleFonts.exo2(
-                    color: isOnline
-                        ? AppColors.accentGreen.withOpacity(0.8)
-                        : Colors.white30,
-                    fontSize: 10.sp,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-      actions: [
-        if (widget.isAdmin) ...[
-          ScaleButton(
-            onTap: _openExtendDialog,
-            child: Padding(
-              padding: EdgeInsets.only(right: 8.w),
-              child: LiquidGlassContainer(
-                opacity: 0.1,
-                tintColor: AppColors.accentGreen,
-                borderRadius: BorderRadius.circular(10),
-                padding: EdgeInsets.symmetric(horizontal: 10.w, vertical: 8.h),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      Iconsax.clock,
-                      size: 14.sp,
-                      color: AppColors.accentGreen,
-                    ),
-                    SizedBox(width: 4.w),
-                    Text(
-                      "Extend",
-                      style: GoogleFonts.exo2(
-                        color: AppColors.accentGreen,
-                        fontSize: 11.sp,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ],
-        ScaleButton(
-          onTap: _sendPlanCard,
-          child: Padding(
-            padding: EdgeInsets.only(right: 16.w),
-            child: LiquidGlassContainer(
-              opacity: 0.1,
-              tintColor: const Color(0xFFF97316),
-              borderRadius: BorderRadius.circular(10),
-              padding: EdgeInsets.symmetric(horizontal: 10.w, vertical: 8.h),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    Iconsax.card,
-                    size: 14.sp,
-                    color: const Color(0xFFF97316),
-                  ),
-                  SizedBox(width: 4.w),
-                  Text(
-                    "Plan",
-                    style: GoogleFonts.exo2(
-                      color: const Color(0xFFF97316),
-                      fontSize: 11.sp,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildUserInfoBar() {
-    final u = _userInfo!;
-    return Container(
-      margin: EdgeInsets.symmetric(vertical: 6.h),
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        physics: const BouncingScrollPhysics(),
-        padding: EdgeInsets.symmetric(horizontal: 16.w),
-        child: Row(
-          children: [
-            _infoTag(
-              u['status'] ?? '',
-              u['status'] == 'active'
-                  ? AppColors.accentGreen
-                  : Colors.redAccent,
-            ),
-            _infoTag(u['plan_name'] ?? 'No Plan', Colors.blueAccent),
-            if (u['business_plan'] != null)
-              _infoTag(u['business_plan'], const Color(0xFFF97316)),
-            if (u['server_name'] != null)
-              _infoTag(u['server_name'], const Color(0xFF22D3EE)),
-            _infoTag(
-              u['expiry_label'] ?? (u['expiry_date'] ?? 'N/A'),
-              Colors.amberAccent,
-            ),
-            _infoTag(
-              "${u['traffic_used'] ?? '0'} / ${u['traffic_limit'] ?? '∞'}",
-              Colors.cyanAccent,
-            ),
-            _infoTag("${u['devices'] ?? 1} dev", Colors.purpleAccent),
-            if (u['agent_name'] != null)
-              _infoTag(u['agent_name'], Colors.tealAccent),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _infoTag(String text, Color color) {
-    return Container(
-      margin: EdgeInsets.only(right: 6.w),
-      padding: EdgeInsets.symmetric(horizontal: 10.w, vertical: 6.h),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(8),
-        color: color.withOpacity(0.1),
-        border: Border.all(color: color.withOpacity(0.2)),
-      ),
-      child: Text(
-        text,
-        style: GoogleFonts.exo2(
-          color: color,
-          fontSize: 10.sp,
-          fontWeight: FontWeight.w600,
-        ),
-      ),
-    );
-  }
-
-  Widget _buildMessage(Map<String, dynamic> msg) {
-    final type = msg['type'] ?? 'text';
-    final sender = msg['sender_type'] ?? 'user';
-    final isAdmin = sender == 'admin';
-
-    if (type == 'renewal_request') return _buildRenewalRequestBubble(msg);
-    if (type == 'plan_card') return _buildPlanCardBubble(msg);
-    if (type == 'broadcast') return _buildBroadcastBubble(msg);
-    return _buildTextBubble(msg, isAdmin);
-  }
-
-  Widget _buildTextBubble(Map<String, dynamic> msg, bool isAdmin) {
-    final message = msg['message'] ?? '';
-    final imageUrl = ApiConfig.resolveMediaUrl(msg['image_url']);
-    final time = msg['created_at'] ?? '';
-    final isRead = msg['is_read'] == true || msg['is_read'] == 1;
-    final isSending = msg['_sending'] == true;
-    final isLocalImage = msg['_is_local_image'] == true;
-
-    return Opacity(
-      opacity: isSending ? 0.6 : 1.0,
-      child: Padding(
-        padding: EdgeInsets.only(bottom: 14.h),
-        child: Column(
-          crossAxisAlignment: isAdmin
-              ? CrossAxisAlignment.end
-              : CrossAxisAlignment.start,
-          children: [
-            Row(
-              mainAxisAlignment: isAdmin
-                  ? MainAxisAlignment.end
-                  : MainAxisAlignment.start,
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                if (!isAdmin) ...[
-                  CircleAvatar(
-                    radius: 15.w,
-                    backgroundColor: Colors.white.withOpacity(0.06),
-                    child: Text(
-                      widget.username.isNotEmpty
-                          ? widget.username[0].toUpperCase()
-                          : '?',
-                      style: GoogleFonts.exo2(
-                        color: Colors.white70,
-                        fontSize: 12.sp,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                  SizedBox(width: 8.w),
-                ],
-                Flexible(
-                  child: LiquidGlassContainer(
-                    opacity: isAdmin ? 0.12 : 0.05,
-                    blurSigma: 15,
-                    tintColor: isAdmin ? AppColors.accentGreen : Colors.white,
-                    withBorder: true,
-                    padding: EdgeInsets.all(14.w),
-                    borderRadius: BorderRadius.only(
-                      topLeft: const Radius.circular(20),
-                      topRight: const Radius.circular(20),
-                      bottomLeft: isAdmin
-                          ? const Radius.circular(20)
-                          : const Radius.circular(4),
-                      bottomRight: isAdmin
-                          ? const Radius.circular(4)
-                          : const Radius.circular(20),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        if (imageUrl != null) ...[
-                          GestureDetector(
-                            onTap: () =>
-                                _showFullImage(imageUrl, isLocal: isLocalImage),
-                            child: ConstrainedBox(
-                              constraints: BoxConstraints(
-                                maxWidth: 200.w,
-                                maxHeight: 180.h,
-                              ),
-                              child: ClipRRect(
-                                borderRadius: BorderRadius.circular(12),
-                                child: Stack(
-                                  children: [
-                                    isLocalImage
-                                        ? Image.file(
-                                            File(imageUrl),
-                                            width: 200.w,
-                                            height: 180.h,
-                                            fit: BoxFit.cover,
-                                          )
-                                        : Image.network(
-                                            imageUrl,
-                                            width: 200.w,
-                                            height: 180.h,
-                                            fit: BoxFit.cover,
-                                            loadingBuilder: (_, child, p) =>
-                                                p == null
-                                                ? child
-                                                : Container(
-                                                    height: 180.h,
-                                                    width: 200.w,
-                                                    decoration: BoxDecoration(
-                                                      color: Colors.white
-                                                          .withOpacity(0.03),
-                                                      borderRadius:
-                                                          BorderRadius.circular(
-                                                            12,
-                                                          ),
-                                                    ),
-                                                    child: const Center(
-                                                      child:
-                                                          CircularProgressIndicator(
-                                                            strokeWidth: 2,
-                                                            color: AppColors
-                                                                .accentGreen,
-                                                          ),
-                                                    ),
-                                                  ),
-                                            errorBuilder: (_, __, ___) =>
-                                                Container(
-                                                  height: 100.h,
-                                                  width: 140.w,
-                                                  decoration: BoxDecoration(
-                                                    color: Colors.white
-                                                        .withOpacity(0.03),
-                                                    borderRadius:
-                                                        BorderRadius.circular(
-                                                          12,
-                                                        ),
-                                                  ),
-                                                  child: Icon(
-                                                    Iconsax.gallery_slash,
-                                                    color: Colors.white24,
-                                                    size: 24.sp,
-                                                  ),
-                                                ),
-                                          ),
-                                    Positioned(
-                                      bottom: 6,
-                                      right: 6,
-                                      child: Container(
-                                        padding: EdgeInsets.all(4.w),
-                                        decoration: BoxDecoration(
-                                          color: Colors.black.withOpacity(0.5),
-                                          borderRadius: BorderRadius.circular(
-                                            6,
-                                          ),
-                                        ),
-                                        child: Icon(
-                                          Iconsax.maximize_4,
-                                          color: Colors.white70,
-                                          size: 12.sp,
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
+                      if (_showJumpToLatest)
+                        Positioned(
+                          right: 12,
+                          bottom: 12,
+                          child: FloatingActionButton.small(
+                            heroTag: 'jump-latest',
+                            onPressed: () => _scrollToBottom(),
+                            backgroundColor: AppColors.surface,
+                            foregroundColor: AppColors.textSecondary,
+                            elevation: 2,
+                            shape: const CircleBorder(
+                              side: BorderSide(color: AppColors.border),
+                            ),
+                            child: const Icon(
+                              Icons.arrow_downward_rounded,
+                              size: 18,
                             ),
                           ),
-                          if (message.isNotEmpty) SizedBox(height: 10.h),
-                        ],
-                        if (message.isNotEmpty)
-                          Text(
-                            message,
-                            style: GoogleFonts.exo2(
-                              color: Colors.white.withOpacity(0.95),
-                              fontSize: 14.sp,
-                              height: 1.4,
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
-                ),
-                if (isAdmin) ...[
-                  SizedBox(width: 8.w),
-                  Container(
-                    padding: EdgeInsets.all(2.w),
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      gradient: LinearGradient(
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                        colors: [
-                          Colors.white.withOpacity(0.12),
-                          Colors.white.withOpacity(0.04),
-                        ],
-                      ),
-                    ),
-                    child: CircleAvatar(
-                      radius: 15.w,
-                      backgroundColor: Colors.white.withOpacity(0.06),
-                      child: Icon(
-                        Iconsax.user,
-                        size: 16.sp,
-                        color: Colors.white54,
-                      ),
-                    ),
-                  ),
-                ],
-              ],
-            ),
-            SizedBox(height: 5.h),
-            Padding(
-              padding: EdgeInsets.only(
-                left: isAdmin ? 0 : 46.w,
-                right: isAdmin ? 46.w : 0,
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                mainAxisAlignment: isAdmin
-                    ? MainAxisAlignment.end
-                    : MainAxisAlignment.start,
-                children: [
-                  Text(
-                    time,
-                    style: GoogleFonts.exo2(
-                      color: Colors.white30,
-                      fontSize: 10.sp,
-                    ),
-                  ),
-                  if (isAdmin) ...[
-                    SizedBox(width: 6.w),
-                    Text(
-                      isSending
-                          ? "Sending..."
-                          : isRead
-                          ? "Read"
-                          : "Sent",
-                      style: GoogleFonts.exo2(
-                        color: isSending
-                            ? Colors.white24
-                            : isRead
-                            ? AppColors.accentGreen
-                            : Colors.white30,
-                        fontSize: 9.sp,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    SizedBox(width: 3.w),
-                    Icon(
-                      isSending
-                          ? Icons.schedule
-                          : isRead
-                          ? Icons.done_all
-                          : Icons.done,
-                      size: 12.sp,
-                      color: isSending
-                          ? Colors.white24
-                          : isRead
-                          ? AppColors.accentGreen
-                          : Colors.white38,
-                    ),
-                  ],
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildRenewalRequestBubble(Map<String, dynamic> msg) {
-    final meta = msg['metadata'] as Map<String, dynamic>? ?? {};
-    final reqId = msg['req_id'];
-    final planName = meta['plan_name'] ?? 'Unknown Plan';
-    final type = meta['type'] ?? 'plan_renewal';
-    final months = meta['duration_months'] ?? 0;
-    final extraSlots = meta['extra_device_slots'] ?? 0;
-    final imageUrl = ApiConfig.resolveMediaUrl(msg['image_url']);
-    final time = msg['created_at'] ?? '';
-    const reqColor = Colors.amberAccent;
-
-    return Padding(
-      padding: EdgeInsets.only(bottom: 14.h),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              CircleAvatar(
-                radius: 15.w,
-                backgroundColor: Colors.white.withOpacity(0.06),
-                child: Text(
-                  widget.username.isNotEmpty
-                      ? widget.username[0].toUpperCase()
-                      : '?',
-                  style: GoogleFonts.exo2(
-                    color: Colors.white70,
-                    fontSize: 12.sp,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ),
-              SizedBox(width: 8.w),
-              Flexible(
-                child: LiquidGlassContainer(
-                  opacity: 0.1,
-                  blurSigma: 15,
-                  tintColor: reqColor,
-                  withBorder: true,
-                  padding: EdgeInsets.all(14.w),
-                  borderRadius: const BorderRadius.only(
-                    topLeft: Radius.circular(20),
-                    topRight: Radius.circular(20),
-                    bottomLeft: Radius.circular(4),
-                    bottomRight: Radius.circular(20),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Container(
-                            padding: EdgeInsets.all(5.w),
-                            decoration: BoxDecoration(
-                              borderRadius: BorderRadius.circular(8),
-                              color: reqColor.withOpacity(0.15),
-                            ),
-                            child: Icon(
-                              Iconsax.receipt_2,
-                              color: reqColor,
-                              size: 14.sp,
-                            ),
-                          ),
-                          SizedBox(width: 8.w),
-                          Text(
-                            type == 'device_slot'
-                                ? "Device Slot Request"
-                                : "Renewal Request",
-                            style: GoogleFonts.exo2(
-                              color: reqColor,
-                              fontSize: 12.sp,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                        ],
-                      ),
-                      SizedBox(height: 10.h),
-                      Container(
-                        padding: EdgeInsets.all(10.w),
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(10),
-                          color: Colors.white.withOpacity(0.04),
-                          border: Border.all(color: reqColor.withOpacity(0.08)),
-                        ),
-                        child: Column(
-                          children: [
-                            if (type != 'device_slot')
-                              _metaRow("Plan", planName),
-                            _metaRow(
-                              type == 'device_slot' ? "Slots" : "Duration",
-                              type == 'device_slot'
-                                  ? "$months slot(s)"
-                                  : "$months month(s)",
-                            ),
-                            if (extraSlots > 0)
-                              _metaRow("Extra Devices", "+$extraSlots"),
-                          ],
-                        ),
-                      ),
-                      if (imageUrl != null) ...[
-                        SizedBox(height: 10.h),
-                        GestureDetector(
-                          onTap: () => _showFullImage(imageUrl),
-                          child: ClipRRect(
-                            borderRadius: BorderRadius.circular(12),
-                            child: Stack(
-                              children: [
-                                Image.network(
-                                  imageUrl,
-                                  width: double.infinity,
-                                  height: 140.h,
-                                  fit: BoxFit.cover,
-                                  errorBuilder: (_, __, ___) => Container(
-                                    width: double.infinity,
-                                    height: 80.h,
-                                    color: Colors.white.withOpacity(0.03),
-                                    child: Icon(
-                                      Iconsax.gallery_slash,
-                                      color: Colors.white24,
-                                      size: 24.sp,
-                                    ),
-                                  ),
-                                ),
-                                Positioned(
-                                  bottom: 6,
-                                  right: 6,
-                                  child: Container(
-                                    padding: EdgeInsets.all(4.w),
-                                    decoration: BoxDecoration(
-                                      color: Colors.black.withOpacity(0.5),
-                                      borderRadius: BorderRadius.circular(6),
-                                    ),
-                                    child: Icon(
-                                      Iconsax.maximize_4,
-                                      color: Colors.white70,
-                                      size: 12.sp,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ],
-                      SizedBox(height: 14.h),
-                      if (reqId != null)
-                        Row(
-                          children: [
-                            Expanded(
-                              child: ScaleButton(
-                                onTap: () => _approveRequest(reqId),
-                                child: Container(
-                                  padding: EdgeInsets.symmetric(vertical: 10.h),
-                                  decoration: BoxDecoration(
-                                    borderRadius: BorderRadius.circular(12),
-                                    color: AppColors.accentGreen.withOpacity(
-                                      0.15,
-                                    ),
-                                    border: Border.all(
-                                      color: AppColors.accentGreen.withOpacity(
-                                        0.3,
-                                      ),
-                                    ),
-                                  ),
-                                  child: Center(
-                                    child: Text(
-                                      "Approve",
-                                      style: GoogleFonts.exo2(
-                                        color: AppColors.accentGreen,
-                                        fontSize: 12.sp,
-                                        fontWeight: FontWeight.w700,
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ),
-                            SizedBox(width: 8.w),
-                            Expanded(
-                              child: ScaleButton(
-                                onTap: () => _rejectRequest(reqId),
-                                child: Container(
-                                  padding: EdgeInsets.symmetric(vertical: 10.h),
-                                  decoration: BoxDecoration(
-                                    borderRadius: BorderRadius.circular(12),
-                                    color: Colors.redAccent.withOpacity(0.1),
-                                    border: Border.all(
-                                      color: Colors.redAccent.withOpacity(0.2),
-                                    ),
-                                  ),
-                                  child: Center(
-                                    child: Text(
-                                      "Reject",
-                                      style: GoogleFonts.exo2(
-                                        color: Colors.redAccent,
-                                        fontSize: 12.sp,
-                                        fontWeight: FontWeight.w700,
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ],
                         ),
                     ],
                   ),
-                ),
-              ),
-            ],
           ),
-          SizedBox(height: 5.h),
-          Padding(
-            padding: EdgeInsets.only(left: 46.w),
-            child: Text(
-              time,
-              style: GoogleFonts.exo2(color: Colors.white30, fontSize: 10.sp),
-            ),
+          _Composer(
+            controller: _msgController,
+            focusNode: _focusNode,
+            selectedImage: _selectedImage,
+            onPickImage: _pickImage,
+            onClearImage: () => setState(() => _selectedImage = null),
+            onSend: _send,
           ),
         ],
       ),
     );
   }
 
-  Widget _buildPlanCardBubble(Map<String, dynamic> msg) {
-    final meta = msg['metadata'] as Map<String, dynamic>? ?? {};
-    final plans =
-        (meta['plans'] as List?)
-            ?.map((e) => Map<String, dynamic>.from(e))
-            .toList() ??
-        [];
-    final time = msg['created_at'] ?? '';
-    const Color bizColor = Color(0xFFF97316);
-
-    return Padding(
-      padding: EdgeInsets.only(bottom: 14.h),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.end,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.end,
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Flexible(
-                child: LiquidGlassContainer(
-                  opacity: 0.1,
-                  blurSigma: 15,
-                  tintColor: bizColor,
-                  padding: EdgeInsets.all(14.w),
-                  borderRadius: const BorderRadius.only(
-                    topLeft: Radius.circular(20),
-                    topRight: Radius.circular(20),
-                    bottomLeft: Radius.circular(20),
-                    bottomRight: Radius.circular(4),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Container(
-                            padding: EdgeInsets.all(5.w),
-                            decoration: BoxDecoration(
-                              borderRadius: BorderRadius.circular(8),
-                              color: bizColor.withOpacity(0.15),
-                            ),
-                            child: Icon(
-                              Iconsax.card,
-                              color: bizColor,
-                              size: 14.sp,
-                            ),
-                          ),
-                          SizedBox(width: 8.w),
-                          Expanded(
-                            child: Text(
-                              "Plan Card Sent",
-                              style: GoogleFonts.exo2(
-                                color: bizColor,
-                                fontSize: 12.sp,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                      SizedBox(height: 10.h),
-                      ...plans.map(
-                        (plan) => Padding(
-                          padding: EdgeInsets.only(bottom: 6.h),
-                          child: LiquidGlassContainer(
-                            opacity: 0.06,
-                            blurSigma: 10,
-                            borderRadius: BorderRadius.circular(10),
-                            withBorder: true,
-                            padding: EdgeInsets.symmetric(
-                              horizontal: 12.w,
-                              vertical: 10.h,
-                            ),
-                            child: Row(
-                              children: [
-                                Expanded(
-                                  child: Text(
-                                    plan['name'] ?? '',
-                                    style: GoogleFonts.exo2(
-                                      color: Colors.white.withOpacity(0.8),
-                                      fontSize: 13.sp,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                ),
-                                Text(
-                                  "${NumberFormat('#,###').format(plan['price'] ?? 0)} Ks",
-                                  style: GoogleFonts.spaceMono(
-                                    color: bizColor,
-                                    fontSize: 12.sp,
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              SizedBox(width: 8.w),
-              Container(
-                padding: EdgeInsets.all(2.w),
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  gradient: LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [
-                      Colors.white.withOpacity(0.12),
-                      Colors.white.withOpacity(0.04),
-                    ],
-                  ),
-                ),
-                child: CircleAvatar(
-                  radius: 15.w,
-                  backgroundColor: Colors.white.withOpacity(0.06),
-                  child: Icon(Iconsax.user, size: 16.sp, color: Colors.white54),
-                ),
-              ),
-            ],
-          ),
-          SizedBox(height: 5.h),
-          Padding(
-            padding: EdgeInsets.only(right: 46.w),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  time,
-                  style: GoogleFonts.exo2(
-                    color: Colors.white30,
-                    fontSize: 10.sp,
-                  ),
-                ),
-                SizedBox(width: 6.w),
-                Icon(
-                  Icons.done_all,
-                  size: 12.sp,
-                  color: (msg['is_read'] == true)
-                      ? AppColors.accentGreen
-                      : Colors.white24,
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
+  /// True when [msg] begins a new run — a different sender from [prev], or
+  /// more than five minutes later.
+  static bool _startsRun(
+    Map<String, dynamic>? prev,
+    Map<String, dynamic>? msg,
+  ) {
+    if (prev == null || msg == null) return true;
+    if (prev['sender_type'] != msg['sender_type']) return true;
+    if ((prev['type'] ?? 'text') != 'text' ||
+        (msg['type'] ?? 'text') != 'text') {
+      return true;
+    }
+    final a = DateTime.tryParse((prev['created_at'] ?? '').toString());
+    final b = DateTime.tryParse((msg['created_at'] ?? '').toString());
+    if (a == null || b == null) return true;
+    return b.difference(a).inMinutes.abs() > 5;
   }
 
-  Widget _buildBroadcastBubble(Map<String, dynamic> msg) {
-    final time = msg['created_at'] ?? '';
-    const Color broadcastColor = Color(0xFFA855F7);
-
-    return Padding(
-      padding: EdgeInsets.only(bottom: 14.h),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.end,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.end,
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Flexible(
-                child: LiquidGlassContainer(
-                  opacity: 0.08,
-                  blurSigma: 15,
-                  tintColor: broadcastColor,
-                  padding: EdgeInsets.all(14.w),
-                  borderRadius: const BorderRadius.only(
-                    topLeft: Radius.circular(20),
-                    topRight: Radius.circular(20),
-                    bottomLeft: Radius.circular(20),
-                    bottomRight: Radius.circular(4),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Container(
-                        padding: EdgeInsets.symmetric(
-                          horizontal: 8.w,
-                          vertical: 3.h,
-                        ),
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(6),
-                          gradient: LinearGradient(
-                            colors: [
-                              broadcastColor.withOpacity(0.2),
-                              broadcastColor.withOpacity(0.1),
-                            ],
-                          ),
-                        ),
-                        child: Text(
-                          "Broadcast",
-                          style: GoogleFonts.exo2(
-                            color: broadcastColor,
-                            fontSize: 10.sp,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      ),
-                      SizedBox(height: 8.h),
-                      Text(
-                        msg['message'] ?? '',
-                        style: GoogleFonts.exo2(
-                          color: Colors.white.withOpacity(0.85),
-                          fontSize: 13.sp,
-                          height: 1.4,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              SizedBox(width: 8.w),
-              Container(
-                padding: EdgeInsets.all(2.w),
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  gradient: LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [
-                      Colors.white.withOpacity(0.12),
-                      Colors.white.withOpacity(0.04),
-                    ],
-                  ),
-                ),
-                child: CircleAvatar(
-                  radius: 15.w,
-                  backgroundColor: Colors.white.withOpacity(0.06),
-                  child: Icon(Iconsax.user, size: 16.sp, color: Colors.white54),
-                ),
-              ),
-            ],
-          ),
-          SizedBox(height: 5.h),
-          Padding(
-            padding: EdgeInsets.only(right: 46.w),
-            child: Text(
-              time,
-              style: GoogleFonts.exo2(color: Colors.white30, fontSize: 10.sp),
-            ),
-          ),
-        ],
-      ),
-    );
+  static bool _isNewDay(Map<String, dynamic>? prev, Map<String, dynamic> msg) {
+    final current = DateTime.tryParse((msg['created_at'] ?? '').toString());
+    if (current == null) return false;
+    if (prev == null) return true;
+    final previous = DateTime.tryParse((prev['created_at'] ?? '').toString());
+    if (previous == null) return true;
+    return current.day != previous.day ||
+        current.month != previous.month ||
+        current.year != previous.year;
   }
 
-  Widget _buildImagePreview() {
-    return Padding(
-      padding: EdgeInsets.symmetric(horizontal: 16.w, vertical: 8.h),
-      child: Align(
-        alignment: Alignment.centerRight,
-        child: Stack(
-          children: [
-            ClipRRect(
-              borderRadius: BorderRadius.circular(16),
-              child: Image.file(
-                _selectedImage!,
-                height: 120.h,
-                width: 120.w,
-                fit: BoxFit.cover,
-              ),
-            ),
-            Positioned(
-              top: 6,
-              right: 6,
-              child: ScaleButton(
-                onTap: () => setState(() => _selectedImage = null),
-                child: Container(
-                  padding: EdgeInsets.all(6.w),
-                  decoration: BoxDecoration(
-                    color: Colors.black.withOpacity(0.6),
-                    shape: BoxShape.circle,
-                    border: Border.all(color: Colors.white.withOpacity(0.1)),
-                  ),
-                  child: Icon(Icons.close, color: Colors.white, size: 14.sp),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildInputBar() {
-    return Container(
-      color: const Color(0xFF050508).withOpacity(
-        0.8,
-      ), // subtle background to prevent list peeking through edges
-      child: SafeArea(
-        top: false,
-        child: Container(
-          margin: EdgeInsets.only(
-            bottom: Platform.isIOS ? 10.h : 16.h,
-            left: 16.w,
-            right: 16.w,
-            top: 8.h,
-          ),
-          child: LiquidGlassContainer(
-            opacity: 0.08,
-            blurSigma: 20,
-            borderRadius: BorderRadius.circular(30),
-            withBorder: true,
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                ScaleButton(
-                  onTap: _pickImage,
-                  child: Padding(
-                    padding: EdgeInsets.all(14.w),
-                    child: Icon(
-                      Iconsax.paperclip,
-                      color: Colors.white38,
-                      size: 22.sp,
-                    ),
-                  ),
-                ),
-                Expanded(
-                  child: Container(
-                    constraints: BoxConstraints(maxHeight: 120.h),
-                    child: TextField(
-                      controller: _msgController,
-                      focusNode: _focusNode,
-                      minLines: 1,
-                      maxLines: 5,
-                      style: GoogleFonts.exo2(
-                        color: Colors.white.withOpacity(0.95),
-                        fontSize: 14.sp,
-                      ),
-                      decoration: InputDecoration(
-                        hintText: "Type a message...",
-                        hintStyle: GoogleFonts.exo2(
-                          color: Colors.white24,
-                          fontSize: 14.sp,
-                        ),
-                        border: InputBorder.none,
-                        contentPadding: EdgeInsets.symmetric(vertical: 14.h),
-                      ),
-                    ),
-                  ),
-                ),
-                ScaleButton(
-                  onTap: _sendReply,
-                  child: Container(
-                    margin: EdgeInsets.only(right: 6.w, bottom: 6.h, top: 6.h),
-                    child: LiquidGlassContainer(
-                      opacity: 0.12,
-                      blurSigma: 15,
-                      tintColor: AppColors.accentGreen,
-                      borderRadius: BorderRadius.circular(50),
-                      withBorder: true,
-                      padding: EdgeInsets.all(10.w),
-                      child: Icon(
-                        Iconsax.send_1,
-                        color: AppColors.accentGreen,
-                        size: 18.sp,
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _metaRow(String label, String value) {
-    return Padding(
-      padding: EdgeInsets.only(bottom: 3.h),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(
-            label,
-            style: GoogleFonts.exo2(color: Colors.white38, fontSize: 11.sp),
-          ),
-          Text(
-            value,
-            style: GoogleFonts.exo2(
-              color: Colors.white.withOpacity(0.8),
-              fontSize: 12.sp,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildConfirmDialog(
-    String title,
-    String body, {
-    bool isApprove = false,
-    bool isDanger = false,
-    required IconData icon,
-  }) {
-    final color = isDanger
-        ? Colors.redAccent
-        : isApprove
-        ? AppColors.accentGreen
-        : Colors.blueAccent;
-    return BackdropFilter(
-      filter: ui.ImageFilter.blur(sigmaX: 8, sigmaY: 8),
-      child: Dialog(
-        backgroundColor: Colors.transparent,
-        child: LiquidGlassContainer(
-          opacity: 0.15,
-          blurSigma: 15,
-          tintColor: color,
-          padding: EdgeInsets.all(24.w),
-          borderRadius: BorderRadius.circular(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                padding: EdgeInsets.all(14.w),
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: color.withOpacity(0.15),
-                  boxShadow: [
-                    BoxShadow(
-                      color: color.withOpacity(0.2),
-                      blurRadius: 12,
-                      spreadRadius: 0,
-                    ),
-                  ],
-                ),
-                child: Icon(icon, color: color, size: 28.sp),
-              ),
-              SizedBox(height: 16.h),
-              Text(
-                title,
-                style: GoogleFonts.exo2(
-                  color: Colors.white,
-                  fontSize: 17.sp,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              SizedBox(height: 8.h),
-              Text(
-                body,
-                style: GoogleFonts.exo2(color: Colors.white70, fontSize: 13.sp),
-                textAlign: TextAlign.center,
-              ),
-              SizedBox(height: 20.h),
-              Row(
-                children: [
-                  Expanded(
-                    child: ScaleButton(
-                      onTap: () => Navigator.pop(context, false),
-                      child: Container(
-                        height: 44.h,
-                        decoration: BoxDecoration(
-                          color: Colors.white.withOpacity(0.08),
-                          borderRadius: BorderRadius.circular(14),
-                          border: Border.all(
-                            color: Colors.white.withOpacity(0.06),
-                          ),
-                        ),
-                        child: Center(
-                          child: Text(
-                            "Cancel",
-                            style: GoogleFonts.exo2(
-                              color: Colors.white70,
-                              fontWeight: FontWeight.w600,
-                              fontSize: 13.sp,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                  SizedBox(width: 12.w),
-                  Expanded(
-                    child: ScaleButton(
-                      onTap: () => Navigator.pop(context, true),
-                      child: Container(
-                        height: 44.h,
-                        decoration: BoxDecoration(
-                          color: color.withOpacity(0.25),
-                          borderRadius: BorderRadius.circular(14),
-                          border: Border.all(color: color.withOpacity(0.5)),
-                          boxShadow: [
-                            BoxShadow(
-                              color: color.withOpacity(0.15),
-                              blurRadius: 8,
-                            ),
-                          ],
-                        ),
-                        child: Center(
-                          child: Text(
-                            "Confirm",
-                            style: GoogleFonts.exo2(
-                              color: Colors.white,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 13.sp,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  void _showFullImage(String url, {bool isLocal = false}) {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => Scaffold(
-          backgroundColor: Colors.black,
-          extendBodyBehindAppBar: true,
-          appBar: AppBar(
-            backgroundColor: Colors.black45,
-            elevation: 0,
-            leading: IconButton(
-              icon: const Icon(Iconsax.arrow_left_2, color: Colors.white),
-              onPressed: () => Navigator.pop(context),
-            ),
-          ),
-          body: InteractiveViewer(
-            minScale: 0.5,
-            maxScale: 4.0,
-            child: Center(
-              child: isLocal
-                  ? Image.file(File(url), fit: BoxFit.contain)
-                  : Image.network(
-                      url,
-                      fit: BoxFit.contain,
-                      loadingBuilder: (_, child, p) => p == null
-                          ? child
-                          : const CircularProgressIndicator(
-                              color: AppColors.accentGreen,
-                            ),
-                      errorBuilder: (_, __, ___) =>
-                          const Icon(Icons.error, color: Colors.redAccent),
-                    ),
-            ),
-          ),
-        ),
-      ),
-    );
+  static String _lastSeen(String? raw) {
+    if (raw == null || raw.isEmpty) return 'Offline';
+    final parsed = DateTime.tryParse(raw);
+    if (parsed == null) return 'Offline';
+    final diff = DateTime.now().difference(parsed);
+    if (diff.inMinutes < 60) return 'Last seen ${diff.inMinutes}m ago';
+    if (diff.inHours < 24) return 'Last seen ${diff.inHours}h ago';
+    return 'Last seen ${DateFormat('dd MMM').format(parsed)}';
   }
 }
 
-class _ExtendDialog extends StatefulWidget {
-  final int userId;
-  final Map<String, dynamic> userInfo;
-  final AgentChatService chatService;
-  final Function(String) onSuccess;
-  final Function(String) onError;
+/// Who this user is, at a glance, above the thread.
+///
+/// The agent answering a message needs the same facts every time — which
+/// agent owns the account, what they are on, when it lapses, how many devices
+/// — and was otherwise switching to the user list and back to find them. Every
+/// field here is already in the history payload; none of it costs a request.
+class _UserInfoBar extends StatelessWidget {
+  final Map<String, dynamic> info;
 
-  const _ExtendDialog({
-    required this.userId,
-    required this.userInfo,
-    required this.chatService,
-    required this.onSuccess,
-    required this.onError,
+  const _UserInfoBar({required this.info});
+
+  @override
+  Widget build(BuildContext context) {
+    final expiryLabel = (info['expiry_label'] ?? '').toString();
+    final expiryDays = info['expiry_days'];
+    final expiryColor = switch (expiryDays) {
+      null => AppColors.neutral,
+      final int d when d < 0 => AppColors.danger,
+      final int d when d <= 7 => AppColors.warning,
+      _ => AppColors.success,
+    };
+
+    final chips = <Widget>[
+      if (expiryLabel.isNotEmpty)
+        _InfoChip(
+          icon: Iconsax.timer_1,
+          label: expiryLabel,
+          color: expiryColor,
+          detail: _formatExpiry(info['expiry_date']?.toString()),
+        ),
+      if ((info['plan_name'] ?? '').toString().isNotEmpty)
+        _InfoChip(
+          icon: Iconsax.crown_1,
+          label: info['plan_name'].toString(),
+          color: AppColors.accentInk,
+        ),
+      if ((info['business_plan'] ?? '').toString().isNotEmpty)
+        _InfoChip(
+          icon: Iconsax.briefcase,
+          label: info['business_plan'].toString(),
+          color: AppColors.orange,
+        ),
+      if ((info['server_name'] ?? '').toString().isNotEmpty)
+        _InfoChip(
+          icon: Iconsax.global,
+          label: info['server_name'].toString(),
+          color: AppColors.info,
+        ),
+      _InfoChip(
+        icon: Iconsax.mobile,
+        label:
+            '${info['devices'] ?? 1} device${(info['devices'] ?? 1) == 1 ? '' : 's'}',
+        color: AppColors.violet,
+      ),
+      if ((info['traffic_used'] ?? '').toString().isNotEmpty)
+        _InfoChip(
+          icon: Iconsax.chart_2,
+          label: info['traffic_used'].toString(),
+          color: AppColors.cyan,
+          detail:
+              'Used ${info['traffic_used']} of '
+              '${info['traffic_limit'] ?? 'Unlimited'}',
+        ),
+      if ((info['app_version'] ?? '').toString().isNotEmpty)
+        _InfoChip(
+          // Platform as an icon rather than a word: it is the difference
+          // between "update from the Play Store" and "from the App Store",
+          // and a glyph reads faster than "android" spelled out.
+          icon: _platformIcon(info['platform']?.toString()),
+          label: info['app_version'].toString(),
+          color: AppColors.textSecondary,
+          detail: [
+            info['device_name'],
+            info['platform'],
+            info['app_version'],
+          ].where((e) => e != null && e.toString().isNotEmpty).join(' · '),
+        ),
+      if ((info['agent_name'] ?? '').toString().isNotEmpty)
+        _InfoChip(
+          icon: Iconsax.user_octagon,
+          label: info['agent_name'].toString(),
+          color: AppColors.neutral,
+        ),
+    ];
+
+    return Container(
+      decoration: const BoxDecoration(
+        color: AppColors.surface,
+        border: Border(bottom: BorderSide(color: AppColors.border)),
+      ),
+      padding: const EdgeInsets.symmetric(vertical: 9),
+      // Horizontal rather than wrapped: the bar must not grow to three lines
+      // on a user with a business plan and a long server name, and eat the
+      // thread it sits above.
+      child: SizedBox(
+        height: 26,
+        // Faded at the right edge: without it a row that scrolls looks like a
+        // row that has been cut off.
+        child: ShaderMask(
+          shaderCallback: (rect) => const LinearGradient(
+            begin: Alignment.centerLeft,
+            end: Alignment.centerRight,
+            stops: [0.0, 0.9, 1.0],
+            colors: [Colors.black, Colors.black, Colors.transparent],
+          ).createShader(rect),
+          blendMode: BlendMode.dstIn,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            itemCount: chips.length,
+            separatorBuilder: (_, __) => const SizedBox(width: 7),
+            itemBuilder: (_, i) => chips[i],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Only recent builds report a platform, so an unknown one still gets a
+  /// generic device glyph rather than nothing.
+  static IconData _platformIcon(String? platform) =>
+      switch (platform?.toLowerCase()) {
+        'ios' => Icons.apple,
+        'macos' => Icons.laptop_mac,
+        'android' => Icons.android,
+        'windows' => Icons.desktop_windows,
+        _ => Iconsax.mobile,
+      };
+
+  static String? _formatExpiry(String? raw) {
+    if (raw == null || raw.isEmpty) return null;
+    final parsed = DateTime.tryParse(raw);
+    if (parsed == null) return null;
+    return DateFormat('dd MMM yyyy').format(parsed);
+  }
+}
+
+class _InfoChip extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final Color color;
+
+  /// Shown on tap. Keeps the chip short while the exact date or figure stays
+  /// reachable.
+  final String? detail;
+
+  const _InfoChip({
+    required this.icon,
+    required this.label,
+    required this.color,
+    this.detail,
   });
 
   @override
-  State<_ExtendDialog> createState() => _ExtendDialogState();
+  Widget build(BuildContext context) {
+    final chip = Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9),
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: AppColors.surfaceAlt,
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 12, color: color),
+          const SizedBox(width: 5),
+          Text(
+            label,
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+              color: color,
+            ),
+          ),
+        ],
+      ),
+    );
+
+    if (detail == null) return chip;
+
+    return GestureDetector(
+      onTap: () => ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(detail!), duration: const Duration(seconds: 2)),
+      ),
+      child: chip,
+    );
+  }
 }
 
-class _ExtendDialogState extends State<_ExtendDialog> {
-  final TextEditingController monthsCtrl = TextEditingController();
-  final TextEditingController daysCtrl = TextEditingController();
-  bool isExtending = false;
+// ── Bubbles ───────────────────────────────────────────────────────────────
+
+class _MessageBubble extends StatelessWidget {
+  final Map<String, dynamic> msg;
+  final bool showDaySeparator;
+  final bool isFirstInRun;
+  final bool isLastInRun;
+  final Future<void> Function(int) onApprove;
+  final Future<void> Function(int) onReject;
+  final void Function(String, {bool isLocal}) onOpenImage;
+
+  const _MessageBubble({
+    required this.msg,
+    required this.showDaySeparator,
+    this.isFirstInRun = true,
+    this.isLastInRun = true,
+    required this.onApprove,
+    required this.onReject,
+    required this.onOpenImage,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final type = (msg['type'] ?? 'text').toString();
+
+    final body = switch (type) {
+      'renewal_request' => _RenewalBubble(
+        msg: msg,
+        onApprove: onApprove,
+        onReject: onReject,
+        onOpenImage: onOpenImage,
+      ),
+      'plan_card' => _SystemBubble(
+        msg: msg,
+        icon: Iconsax.card,
+        color: AppColors.violet,
+        wash: AppColors.violetWash,
+        label: 'Plan options sent',
+      ),
+      'broadcast' => _SystemBubble(
+        msg: msg,
+        icon: Iconsax.send_2,
+        color: AppColors.info,
+        wash: AppColors.infoWash,
+        label: 'Broadcast',
+      ),
+      _ => _TextBubble(
+        msg: msg,
+        onOpenImage: onOpenImage,
+        isFirstInRun: isFirstInRun,
+        isLastInRun: isLastInRun,
+      ),
+    };
+
+    if (!showDaySeparator) return body;
+
+    return Column(
+      children: [
+        _DaySeparator(raw: (msg['created_at'] ?? '').toString()),
+        body,
+      ],
+    );
+  }
+}
+
+class _DaySeparator extends StatelessWidget {
+  final String raw;
+
+  const _DaySeparator({required this.raw});
+
+  @override
+  Widget build(BuildContext context) {
+    final parsed = DateTime.tryParse(raw);
+    if (parsed == null) return const SizedBox.shrink();
+
+    final now = DateTime.now();
+    final isToday =
+        parsed.year == now.year &&
+        parsed.month == now.month &&
+        parsed.day == now.day;
+    final yesterday = now.subtract(const Duration(days: 1));
+    final isYesterday =
+        parsed.year == yesterday.year &&
+        parsed.month == yesterday.month &&
+        parsed.day == yesterday.day;
+
+    final label = isToday
+        ? 'Today'
+        : isYesterday
+        ? 'Yesterday'
+        : DateFormat('dd MMM yyyy').format(parsed);
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 14),
+      child: Center(
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+          decoration: BoxDecoration(
+            color: AppColors.surfaceAlt,
+            borderRadius: BorderRadius.circular(999),
+          ),
+          child: Text(
+            label,
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _TextBubble extends StatelessWidget {
+  final Map<String, dynamic> msg;
+  final void Function(String, {bool isLocal}) onOpenImage;
+  final bool isFirstInRun;
+  final bool isLastInRun;
+
+  const _TextBubble({
+    required this.msg,
+    required this.onOpenImage,
+    this.isFirstInRun = true,
+    this.isLastInRun = true,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = Theme.of(context).textTheme;
+    final isMine = msg['sender_type'] != 'user';
+    final isAi = msg['source'] == 'ai_gemini';
+    final sending = msg['_sending'] == true;
+    final failed = msg['_failed'] == true;
+    final text = (msg['message'] ?? '').toString();
+    final isLocalImage = msg['_is_local_image'] == true;
+    final imageUrl = isLocalImage
+        ? msg['image_url']?.toString()
+        : ApiConfig.resolveMediaUrl(msg['image_url']?.toString());
+    final hasImage = imageUrl != null && imageUrl.isNotEmpty;
+
+    return Padding(
+      // 2px inside a run, 8px between runs: the gap is what separates one
+      // person's turn from the next.
+      padding: EdgeInsets.only(bottom: isLastInRun ? 8 : 2),
+      child: Row(
+        mainAxisAlignment: isMine
+            ? MainAxisAlignment.end
+            : MainAxisAlignment.start,
+        children: [
+          ConstrainedBox(
+            constraints: BoxConstraints(
+              maxWidth: MediaQuery.of(context).size.width * 0.76,
+            ),
+            child: Column(
+              crossAxisAlignment: isMine
+                  ? CrossAxisAlignment.end
+                  : CrossAxisAlignment.start,
+              children: [
+                Container(
+                  decoration: BoxDecoration(
+                    color: isMine ? AppColors.accentInk : AppColors.surface,
+                    // The tail — the one squared corner — belongs to the last
+                    // bubble of a run. Giving every bubble a tail made a run
+                    // of five look like five separate turns.
+                    borderRadius: BorderRadius.only(
+                      topLeft: Radius.circular(
+                        !isMine && !isFirstInRun ? 6 : 16,
+                      ),
+                      topRight: Radius.circular(
+                        isMine && !isFirstInRun ? 6 : 16,
+                      ),
+                      bottomLeft: Radius.circular(
+                        isMine || !isLastInRun ? 16 : 4,
+                      ),
+                      bottomRight: Radius.circular(
+                        !isMine || !isLastInRun ? 16 : 4,
+                      ),
+                    ),
+                    border: isMine ? null : Border.all(color: AppColors.border),
+                  ),
+                  padding: hasImage
+                      ? const EdgeInsets.all(4)
+                      : const EdgeInsets.symmetric(horizontal: 13, vertical: 9),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (hasImage) ...[
+                        GestureDetector(
+                          onTap: () =>
+                              onOpenImage(imageUrl, isLocal: isLocalImage),
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(13),
+                            child: isLocalImage
+                                ? Image.file(
+                                    File(imageUrl),
+                                    width: 210,
+                                    fit: BoxFit.cover,
+                                  )
+                                : Image.network(
+                                    imageUrl,
+                                    width: 210,
+                                    fit: BoxFit.cover,
+                                    errorBuilder: (_, _, _) => Container(
+                                      width: 210,
+                                      height: 120,
+                                      color: AppColors.surfaceAlt,
+                                      alignment: Alignment.center,
+                                      child: const Icon(
+                                        Iconsax.gallery_slash,
+                                        color: AppColors.textTertiary,
+                                      ),
+                                    ),
+                                  ),
+                          ),
+                        ),
+                        if (text.isNotEmpty) const SizedBox(height: 6),
+                      ],
+                      if (text.isNotEmpty)
+                        Padding(
+                          padding: hasImage
+                              ? const EdgeInsets.fromLTRB(9, 0, 9, 5)
+                              : EdgeInsets.zero,
+                          child: Text(
+                            text,
+                            style: t.bodyLarge?.copyWith(
+                              fontSize: 14,
+                              height: 1.35,
+                              color: isMine
+                                  ? AppColors.textOnInk
+                                  : AppColors.textPrimary,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                if (isLastInRun || sending || failed) ...[
+                  const SizedBox(height: 3),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (isAi) ...[
+                        const AppPill(
+                          label: 'AI',
+                          color: AppColors.violet,
+                          background: AppColors.violetWash,
+                        ),
+                        const SizedBox(width: 6),
+                      ],
+                      if (failed)
+                        Text(
+                          'Not sent',
+                          style: t.bodySmall?.copyWith(
+                            fontSize: 10,
+                            color: AppColors.danger,
+                          ),
+                        )
+                      else if (sending)
+                        Text(
+                          'Sending…',
+                          style: t.bodySmall?.copyWith(fontSize: 10),
+                        )
+                      else ...[
+                        Text(
+                          _time((msg['created_at'] ?? '').toString()),
+                          style: t.bodySmall?.copyWith(fontSize: 10),
+                        ),
+                        // Delivery state, on our own messages only — the
+                        // user's are read by definition once they are here.
+                        // The backend already tracks is_read on admin rows;
+                        // it was simply never shown, so an agent could not
+                        // tell an unanswered message from an unseen one.
+                        if (isMine) ...[
+                          const SizedBox(width: 4),
+                          Icon(
+                            msg['is_read'] == true
+                                ? Icons.done_all_rounded
+                                : Icons.done_rounded,
+                            size: 13,
+                            color: msg['is_read'] == true
+                                ? AppColors.info
+                                : AppColors.textTertiary,
+                          ),
+                        ],
+                      ],
+                    ],
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  static String _time(String raw) {
+    final parsed = DateTime.tryParse(raw);
+    if (parsed == null) return '';
+    return DateFormat('h:mm a').format(parsed.toLocal());
+  }
+}
+
+/// Renewal request, with the decision buttons on the message itself.
+class _RenewalBubble extends StatelessWidget {
+  final Map<String, dynamic> msg;
+  final Future<void> Function(int) onApprove;
+  final Future<void> Function(int) onReject;
+  final void Function(String, {bool isLocal}) onOpenImage;
+
+  const _RenewalBubble({
+    required this.msg,
+    required this.onApprove,
+    required this.onReject,
+    required this.onOpenImage,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = Theme.of(context).textTheme;
+    final meta = msg['metadata'] as Map<String, dynamic>? ?? {};
+    final reqId = msg['req_id'];
+    final planName = (meta['plan_name'] ?? 'Unknown plan').toString();
+    final months = meta['duration_months'] ?? 0;
+    final slots = meta['extra_device_slots'] ?? 0;
+    final imageUrl = ApiConfig.resolveMediaUrl(msg['image_url']?.toString());
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10, right: 40),
+      child: AppCard(
+        radius: AppTheme.radiusMd,
+        padding: const EdgeInsets.all(12),
+        tone: SurfaceTone.wash,
+        washColor: AppColors.warningWash,
+        showShadow: false,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const AppIconBadge(
+                  icon: Iconsax.receipt_item,
+                  color: AppColors.warning,
+                  background: AppColors.surface,
+                  size: 15,
+                  padding: 7,
+                ),
+                const SizedBox(width: 9),
+                Expanded(
+                  child: Text(
+                    'Renewal request',
+                    style: t.bodyLarge?.copyWith(
+                      fontSize: 13.5,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Text(
+              '$planName · $months month${months == 1 ? '' : 's'}'
+              '${slots > 0 ? ' · +$slots slot${slots == 1 ? '' : 's'}' : ''}',
+              style: t.bodyMedium?.copyWith(color: AppColors.textPrimary),
+            ),
+            if (imageUrl != null && imageUrl.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              GestureDetector(
+                onTap: () => onOpenImage(imageUrl),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(10),
+                  child: Image.network(
+                    imageUrl,
+                    height: 120,
+                    width: double.infinity,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, _, _) => Container(
+                      height: 120,
+                      color: AppColors.surfaceAlt,
+                      alignment: Alignment.center,
+                      child: const Icon(
+                        Iconsax.gallery_slash,
+                        color: AppColors.textTertiary,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+            if (reqId is int) ...[
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: SizedBox(
+                      height: 38,
+                      child: OutlinedButton(
+                        onPressed: () => onReject(reqId),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: AppColors.danger,
+                          side: const BorderSide(color: AppColors.danger),
+                          padding: EdgeInsets.zero,
+                          minimumSize: Size.zero,
+                          textStyle: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        child: const Text('Reject'),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: SizedBox(
+                      height: 38,
+                      child: FilledButton(
+                        onPressed: () => onApprove(reqId),
+                        style: FilledButton.styleFrom(
+                          padding: EdgeInsets.zero,
+                          minimumSize: Size.zero,
+                          textStyle: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        child: const Text('Approve'),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Plan card and broadcast: system events, not conversation. Rendered as a
+/// centred note rather than a bubble on either side, because neither is
+/// something the agent typed.
+class _SystemBubble extends StatelessWidget {
+  final Map<String, dynamic> msg;
+  final IconData icon;
+  final Color color;
+  final Color wash;
+  final String label;
+
+  const _SystemBubble({
+    required this.msg,
+    required this.icon,
+    required this.color,
+    required this.wash,
+    required this.label,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = Theme.of(context).textTheme;
+    final text = (msg['message'] ?? '').toString();
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxWidth: MediaQuery.of(context).size.width * 0.8,
+          ),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+            decoration: BoxDecoration(
+              color: wash,
+              borderRadius: BorderRadius.circular(AppTheme.radiusMd),
+            ),
+            child: Column(
+              children: [
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(icon, size: 14, color: color),
+                    const SizedBox(width: 7),
+                    Text(
+                      label,
+                      style: t.bodySmall?.copyWith(
+                        color: color,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ),
+                if (text.isNotEmpty) ...[
+                  const SizedBox(height: 5),
+                  Text(
+                    text,
+                    textAlign: TextAlign.center,
+                    style: t.bodySmall?.copyWith(color: AppColors.textPrimary),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ── Composer ──────────────────────────────────────────────────────────────
+
+class _Composer extends StatefulWidget {
+  final TextEditingController controller;
+  final FocusNode focusNode;
+  final File? selectedImage;
+  final VoidCallback onPickImage;
+  final VoidCallback onClearImage;
+  final VoidCallback onSend;
+
+  const _Composer({
+    required this.controller,
+    required this.focusNode,
+    required this.selectedImage,
+    required this.onPickImage,
+    required this.onClearImage,
+    required this.onSend,
+  });
+
+  @override
+  State<_Composer> createState() => _ComposerState();
+}
+
+class _ComposerState extends State<_Composer> {
+  @override
+  Widget build(BuildContext context) {
+    final canSend =
+        widget.controller.text.trim().isNotEmpty ||
+        widget.selectedImage != null;
+
+    return Container(
+      decoration: const BoxDecoration(
+        color: AppColors.surface,
+        border: Border(top: BorderSide(color: AppColors.border)),
+      ),
+      child: SafeArea(
+        top: false,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (widget.selectedImage != null)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
+                child: Row(
+                  children: [
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: Image.file(
+                        widget.selectedImage!,
+                        width: 48,
+                        height: 48,
+                        fit: BoxFit.cover,
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        'Photo attached',
+                        style: Theme.of(context).textTheme.bodyMedium,
+                      ),
+                    ),
+                    IconButton(
+                      onPressed: widget.onClearImage,
+                      icon: const Icon(Iconsax.close_circle, size: 18),
+                      color: AppColors.textTertiary,
+                    ),
+                  ],
+                ),
+              ),
+            Padding(
+              padding: const EdgeInsets.all(8),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  IconButton(
+                    onPressed: widget.onPickImage,
+                    icon: const Icon(Iconsax.gallery, size: 21),
+                    color: AppColors.textSecondary,
+                  ),
+                  Expanded(
+                    child: TextField(
+                      controller: widget.controller,
+                      focusNode: widget.focusNode,
+                      // Focusing is what raises the keyboard; without this an
+                      // agent returning to a thread has to tap the narrow
+                      // field itself rather than anywhere in the bar.
+                      autofocus: false,
+                      minLines: 1,
+                      maxLines: 5,
+                      textCapitalization: TextCapitalization.sentences,
+                      // The server caps a reply at 2,000 characters and
+                      // answers 422 past it. Enforced here so a long message
+                      // is not typed out and then refused.
+                      maxLength: 2000,
+                      maxLengthEnforcement: MaxLengthEnforcement.enforced,
+                      buildCounter:
+                          (
+                            _, {
+                            required currentLength,
+                            required isFocused,
+                            maxLength,
+                          }) =>
+                              // Only near the ceiling: a counter under every
+                              // message is noise for the 20-character replies
+                              // that make up most of a thread.
+                              currentLength < 1800
+                              ? null
+                              : Text(
+                                  '$currentLength / $maxLength',
+                                  style: Theme.of(context).textTheme.bodySmall
+                                      ?.copyWith(
+                                        fontSize: 10,
+                                        color: currentLength >= 2000
+                                            ? AppColors.danger
+                                            : AppColors.textTertiary,
+                                      ),
+                                ),
+                      onChanged: (_) => setState(() {}),
+                      decoration: const InputDecoration(
+                        hintText: 'Message',
+                        isDense: true,
+                        contentPadding: EdgeInsets.symmetric(
+                          horizontal: 14,
+                          vertical: 10,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  // Enabled only with something to send, and it does not
+                  // dismiss the keyboard: agents usually send several lines in
+                  // a row.
+                  IconButton.filled(
+                    onPressed: canSend
+                        ? () {
+                            HapticFeedback.lightImpact();
+                            widget.onSend();
+                            setState(() {});
+                          }
+                        : null,
+                    icon: const Icon(Iconsax.send_1, size: 19),
+                    style: IconButton.styleFrom(
+                      backgroundColor: AppColors.accentInk,
+                      foregroundColor: AppColors.textOnAccent,
+                      disabledBackgroundColor: AppColors.surfaceAlt,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ── Extend ────────────────────────────────────────────────────────────────
+
+class _ExtendSheet extends StatefulWidget {
+  final String username;
+  final int planPrice;
+
+  const _ExtendSheet({required this.username, required this.planPrice});
+
+  @override
+  State<_ExtendSheet> createState() => _ExtendSheetState();
+}
+
+class _ExtendSheetState extends State<_ExtendSheet> {
+  int _months = 1;
+  int _days = 0;
+
+  int get _cost =>
+      ((_months * widget.planPrice) + (_days * widget.planPrice / 30)).ceil();
+
+  @override
+  Widget build(BuildContext context) {
+    final t = Theme.of(context).textTheme;
+    final money = NumberFormat('#,##0');
+
+    return Padding(
+      padding: EdgeInsets.only(
+        left: 20,
+        right: 20,
+        top: 8,
+        bottom: MediaQuery.of(context).viewInsets.bottom + 20,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text('Extend subscription', style: t.titleLarge),
+          const SizedBox(height: 4),
+          Text(
+            'Charged to your balance immediately — ${widget.username} is not '
+            'asked to pay.',
+            style: t.bodyMedium,
+          ),
+          const SizedBox(height: 18),
+          Row(
+            children: [
+              Expanded(
+                child: _Counter(
+                  label: 'Months',
+                  value: _months,
+                  max: 36,
+                  onChanged: (v) => setState(() => _months = v),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: _Counter(
+                  label: 'Days',
+                  value: _days,
+                  max: 29,
+                  onChanged: (v) => setState(() => _days = v),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 18),
+          Row(
+            children: [
+              Text('Cost', style: t.bodyMedium),
+              const Spacer(),
+              Text(
+                widget.planPrice == 0 ? '—' : money.format(_cost),
+                style: t.headlineMedium?.copyWith(fontSize: 20),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          FilledButton(
+            onPressed: (_months == 0 && _days == 0)
+                ? null
+                : () => Navigator.pop(context, {
+                    'months': _months,
+                    'days': _days,
+                  }),
+            child: const Text('Extend'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _Counter extends StatelessWidget {
+  final String label;
+  final int value;
+  final int max;
+  final ValueChanged<int> onChanged;
+
+  const _Counter({
+    required this.label,
+    required this.value,
+    required this.max,
+    required this.onChanged,
+  });
+
+  void _step(int delta) {
+    final next = (value + delta).clamp(0, max);
+    if (next == value) return;
+    HapticFeedback.selectionClick();
+    onChanged(next);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = Theme.of(context).textTheme;
+
+    return AppCard(
+      radius: AppTheme.radiusMd,
+      showShadow: false,
+      padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label, style: t.bodySmall),
+          Row(
+            children: [
+              Text('$value', style: t.headlineMedium?.copyWith(fontSize: 22)),
+              const Spacer(),
+              _StepButton(
+                icon: Icons.remove_rounded,
+                enabled: value > 0,
+                onTap: () => _step(-1),
+              ),
+              const SizedBox(width: 6),
+              _StepButton(
+                icon: Icons.add_rounded,
+                enabled: value < max,
+                onTap: () => _step(1),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _StepButton extends StatelessWidget {
+  final IconData icon;
+  final bool enabled;
+  final VoidCallback onTap;
+
+  const _StepButton({
+    required this.icon,
+    required this.enabled,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: enabled ? AppColors.surfaceAlt : AppColors.background,
+      borderRadius: BorderRadius.circular(8),
+      child: InkWell(
+        onTap: enabled ? onTap : null,
+        borderRadius: BorderRadius.circular(8),
+        child: SizedBox(
+          width: 32,
+          height: 32,
+          child: Icon(
+            icon,
+            size: 18,
+            color: enabled ? AppColors.textPrimary : AppColors.textTertiary,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ── Shared bits ───────────────────────────────────────────────────────────
+
+class _Avatar extends StatelessWidget {
+  final String username;
+  final bool isOnline;
+  final double size;
+
+  const _Avatar({
+    required this.username,
+    required this.isOnline,
+    this.size = 40,
+  });
+
+  static const _avatars = [
+    'assets/images/avatars/a1.png',
+    'assets/images/avatars/a2.png',
+  ];
+
+  String get _asset {
+    if (username.isEmpty) return _avatars.first;
+    var hash = 0;
+    for (final code in username.codeUnits) {
+      hash = (hash * 31 + code) & 0x7fffffff;
+    }
+    return _avatars[hash % _avatars.length];
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: size,
+      height: size,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          ClipOval(
+            child: Image.asset(
+              _asset,
+              width: size,
+              height: size,
+              fit: BoxFit.cover,
+            ),
+          ),
+          if (isOnline)
+            Positioned(
+              right: 0,
+              bottom: 0,
+              child: Container(
+                width: size * 0.28,
+                height: size * 0.28,
+                decoration: BoxDecoration(
+                  color: AppColors.success,
+                  shape: BoxShape.circle,
+                  border: Border.all(color: AppColors.background, width: 1.6),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ImageViewer extends StatelessWidget {
+  final String url;
+  final bool isLocal;
+
+  const _ImageViewer({required this.url, required this.isLocal});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: AppColors.ink,
+      appBar: AppBar(
+        backgroundColor: AppColors.ink,
+        foregroundColor: AppColors.textOnInk,
+      ),
+      body: Center(
+        child: InteractiveViewer(
+          minScale: 1,
+          maxScale: 5,
+          child: isLocal
+              ? Image.file(File(url), fit: BoxFit.contain)
+              : Image.network(
+                  url,
+                  fit: BoxFit.contain,
+                  loadingBuilder: (_, child, progress) =>
+                      progress == null ? child : const AppLoader(),
+                  errorBuilder: (_, _, _) => const AppEmptyState(
+                    icon: Iconsax.gallery_slash,
+                    title: 'Could not load the image',
+                  ),
+                ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Three dots while the user is composing.
+class _TypingBubble extends StatefulWidget {
+  const _TypingBubble();
+
+  @override
+  State<_TypingBubble> createState() => _TypingBubbleState();
+}
+
+class _TypingBubbleState extends State<_TypingBubble>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _c = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1100),
+  )..repeat();
 
   @override
   void dispose() {
-    monthsCtrl.dispose();
-    daysCtrl.dispose();
+    _c.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    int selectedMonths = int.tryParse(monthsCtrl.text) ?? 0;
-    int selectedDays = int.tryParse(daysCtrl.text) ?? 0;
-
-    final int planPrice =
-        int.tryParse(widget.userInfo['plan_price']?.toString() ?? '0') ?? 0;
-    final double dailyRate = planPrice / 30;
-    final int totalCost =
-        ((selectedMonths * planPrice) + (selectedDays * dailyRate)).ceil();
-
-    final summary = [
-      if (selectedMonths > 0)
-        "$selectedMonths month${selectedMonths > 1 ? 's' : ''}",
-      if (selectedDays > 0) "$selectedDays day${selectedDays > 1 ? 's' : ''}",
-    ].join(' + ');
-
-    final canExtend = selectedMonths > 0 || selectedDays > 0;
-
-    return BackdropFilter(
-      filter: ui.ImageFilter.blur(sigmaX: 8, sigmaY: 8),
-      child: Dialog(
-        backgroundColor: Colors.transparent,
-        insetPadding: EdgeInsets.symmetric(horizontal: 20.w, vertical: 24.h),
-        child: SingleChildScrollView(
-          child: LiquidGlassContainer(
-            opacity: 0.15,
-            blurSigma: 15,
-            tintColor: AppColors.accentGreen,
-            padding: EdgeInsets.all(22.w),
-            borderRadius: BorderRadius.circular(24),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Container(
-                      padding: EdgeInsets.all(10.w),
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: AppColors.accentGreen.withOpacity(0.15),
-                      ),
-                      child: Icon(
-                        Iconsax.clock,
-                        color: AppColors.accentGreen,
-                        size: 20.sp,
-                      ),
-                    ),
-                    SizedBox(width: 12.w),
-                    Expanded(
-                      child: Text(
-                        "Extend Subscription",
-                        style: GoogleFonts.exo2(
-                          color: Colors.white,
-                          fontSize: 16.sp,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                SizedBox(height: 20.h),
-
-                Text(
-                  "Months",
-                  style: GoogleFonts.exo2(
-                    color: Colors.white54,
-                    fontSize: 12.sp,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                SizedBox(height: 8.h),
-                TextField(
-                  controller: monthsCtrl,
-                  keyboardType: TextInputType.number,
-                  inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                  onChanged: (val) => setState(() {}),
-                  style: GoogleFonts.exo2(color: Colors.white, fontSize: 14.sp),
-                  decoration: InputDecoration(
-                    hintText: "e.g. 1, 3, 6 (or 0)",
-                    hintStyle: GoogleFonts.exo2(
-                      color: Colors.white30,
-                      fontSize: 13.sp,
-                    ),
-                    contentPadding: EdgeInsets.symmetric(
-                      horizontal: 16.w,
-                      vertical: 12.h,
-                    ),
-                    filled: true,
-                    fillColor: Colors.white.withOpacity(0.06),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide.none,
-                    ),
-                  ),
-                ),
-
-                SizedBox(height: 16.h),
-
-                Text(
-                  "Days",
-                  style: GoogleFonts.exo2(
-                    color: Colors.white54,
-                    fontSize: 12.sp,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                SizedBox(height: 8.h),
-                TextField(
-                  controller: daysCtrl,
-                  keyboardType: TextInputType.number,
-                  inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                  onChanged: (val) => setState(() {}),
-                  style: GoogleFonts.exo2(color: Colors.white, fontSize: 14.sp),
-                  decoration: InputDecoration(
-                    hintText: "e.g. 15, 30 (or 0)",
-                    hintStyle: GoogleFonts.exo2(
-                      color: Colors.white30,
-                      fontSize: 13.sp,
-                    ),
-                    contentPadding: EdgeInsets.symmetric(
-                      horizontal: 16.w,
-                      vertical: 12.h,
-                    ),
-                    filled: true,
-                    fillColor: Colors.white.withOpacity(0.06),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide.none,
-                    ),
-                  ),
-                ),
-
-                if (canExtend) ...[
-                  SizedBox(height: 14.h),
-                  Container(
-                    width: double.infinity,
-                    padding: EdgeInsets.symmetric(
-                      vertical: 12.h,
-                      horizontal: 12.w,
-                    ),
-                    decoration: BoxDecoration(
-                      color: AppColors.accentGreen.withOpacity(0.08),
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(
-                        color: AppColors.accentGreen.withOpacity(0.2),
-                      ),
-                    ),
-                    child: Column(
-                      children: [
-                        Text(
-                          "+ $summary",
-                          style: GoogleFonts.exo2(
-                            color: AppColors.accentGreen,
-                            fontSize: 13.sp,
-                            fontWeight: FontWeight.w600,
-                          ),
-                          textAlign: TextAlign.center,
-                        ),
-                        if (totalCost > 0) ...[
-                          SizedBox(height: 6.h),
-                          Container(
-                            padding: EdgeInsets.symmetric(
-                              horizontal: 8.w,
-                              vertical: 4.h,
-                            ),
-                            decoration: BoxDecoration(
-                              color: Colors.amberAccent.withOpacity(0.15),
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: Text(
-                              "Cost: ${NumberFormat('#,###').format(totalCost)} Ks",
-                              style: GoogleFonts.spaceMono(
-                                color: Colors.amberAccent,
-                                fontSize: 12.sp,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ],
-                    ),
-                  ),
-                ],
-                SizedBox(height: 20.h),
-                Row(
-                  children: [
-                    Expanded(
-                      child: ScaleButton(
-                        onTap: () => Navigator.pop(context),
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            decoration: BoxDecoration(
+              color: AppColors.surface,
+              border: Border.all(color: AppColors.border),
+              borderRadius: const BorderRadius.only(
+                topLeft: Radius.circular(16),
+                topRight: Radius.circular(16),
+                bottomRight: Radius.circular(16),
+                bottomLeft: Radius.circular(4),
+              ),
+            ),
+            child: RepaintBoundary(
+              child: AnimatedBuilder(
+                animation: _c,
+                builder: (context, _) => Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: List.generate(3, (i) {
+                    // One controller, offset per dot, so the motion travels
+                    // rather than pulsing in unison.
+                    final t = (_c.value - i * 0.18) % 1.0;
+                    final wave = t < 0.5
+                        ? Curves.easeOut.transform(t * 2)
+                        : 1 - Curves.easeIn.transform((t - 0.5) * 2);
+                    return Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 2.5),
+                      child: Transform.translate(
+                        offset: Offset(0, -3 * wave),
                         child: Container(
-                          height: 44.h,
+                          width: 6,
+                          height: 6,
                           decoration: BoxDecoration(
-                            color: Colors.white.withOpacity(0.08),
-                            borderRadius: BorderRadius.circular(14),
-                            border: Border.all(
-                              color: Colors.white.withOpacity(0.06),
-                            ),
-                          ),
-                          child: Center(
-                            child: Text(
-                              "Cancel",
-                              style: GoogleFonts.exo2(
-                                color: Colors.white70,
-                                fontWeight: FontWeight.w600,
-                                fontSize: 13.sp,
-                              ),
+                            shape: BoxShape.circle,
+                            color: AppColors.textTertiary.withValues(
+                              alpha: 0.4 + 0.6 * wave,
                             ),
                           ),
                         ),
                       ),
-                    ),
-                    SizedBox(width: 12.w),
-                    Expanded(
-                      child: ScaleButton(
-                        onTap: canExtend && !isExtending
-                            ? () async {
-                                setState(() => isExtending = true);
-                                final result = await widget.chatService
-                                    .extendSubscription(
-                                      widget.userId,
-                                      selectedMonths,
-                                      selectedDays,
-                                    );
-                                if (mounted) {
-                                  Navigator.pop(context);
-                                  if (result != null &&
-                                      result['success'] == true) {
-                                    widget.onSuccess(
-                                      result['message'] ?? 'Success',
-                                    );
-                                  } else {
-                                    widget.onError(
-                                      result?['message'] ?? 'Failed to extend',
-                                    );
-                                  }
-                                }
-                              }
-                            : null,
-                        child: Container(
-                          height: 44.h,
-                          decoration: BoxDecoration(
-                            color: canExtend
-                                ? AppColors.accentGreen.withOpacity(0.25)
-                                : Colors.white.withOpacity(0.04),
-                            borderRadius: BorderRadius.circular(14),
-                            border: Border.all(
-                              color: canExtend
-                                  ? AppColors.accentGreen.withOpacity(0.5)
-                                  : Colors.white.withOpacity(0.04),
-                            ),
-                          ),
-                          child: Center(
-                            child: isExtending
-                                ? SizedBox(
-                                    width: 16.w,
-                                    height: 16.w,
-                                    child: const CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                      color: AppColors.accentGreen,
-                                    ),
-                                  )
-                                : Text(
-                                    "Confirm",
-                                    style: GoogleFonts.exo2(
-                                      color: canExtend
-                                          ? AppColors.accentGreen
-                                          : Colors.white24,
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 13.sp,
-                                    ),
-                                  ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
+                    );
+                  }),
                 ),
-              ],
+              ),
             ),
           ),
-        ),
+        ],
       ),
     );
   }

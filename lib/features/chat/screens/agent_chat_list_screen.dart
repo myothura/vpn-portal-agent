@@ -199,8 +199,11 @@ class _AgentChatListScreenState extends State<AgentChatListScreen> {
       setState(() => _users[index]['unread_count'] = 0);
     }
 
-    await Navigator.push(
-      context,
+    // rootNavigator: pushed over the whole shell, not inside the tab. A chat
+    // thread owns the screen — the nav bar underneath it is a row of controls
+    // the agent cannot use while typing a reply, and it costs the keyboard
+    // 60px it needs.
+    await Navigator.of(context, rootNavigator: true).push(
       AppTransitions.slide(
         AgentChatDetailScreen(
           userId: user['id'],

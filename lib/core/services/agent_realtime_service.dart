@@ -70,12 +70,38 @@ class AgentRealtimeService {
 
   final List<void Function(Map<String, dynamic>)> _listeners = [];
 
+  // Separate lists rather than one stream with a type field: the chat list
+  // wants new messages, the thread wants all three, and folding them together
+  // would make every screen filter events it never asked for.
+  final List<void Function(Map<String, dynamic>)> _readListeners = [];
+  final List<void Function(Map<String, dynamic>)> _typingListeners = [];
+
   void addListener(void Function(Map<String, dynamic>) cb) {
     if (!_listeners.contains(cb)) _listeners.add(cb);
   }
 
   void removeListener(void Function(Map<String, dynamic>) cb) {
     _listeners.remove(cb);
+  }
+
+  /// Fires when the user has read the agent's messages.
+  void addReadListener(void Function(Map<String, dynamic>) cb) {
+    if (!_readListeners.contains(cb)) _readListeners.add(cb);
+  }
+
+  void removeReadListener(void Function(Map<String, dynamic>) cb) {
+    _readListeners.remove(cb);
+  }
+
+  /// Fires while the user is composing. Transient — the caller expires its
+  /// own indicator rather than waiting for a "stopped" event that may never
+  /// arrive if the app is closed mid-sentence.
+  void addTypingListener(void Function(Map<String, dynamic>) cb) {
+    if (!_typingListeners.contains(cb)) _typingListeners.add(cb);
+  }
+
+  void removeTypingListener(void Function(Map<String, dynamic>) cb) {
+    _typingListeners.remove(cb);
   }
 
   Future<void> start() async {
@@ -90,7 +116,17 @@ class AgentRealtimeService {
         debugPrint('[AgentRealtime] missing token/agentId - abort');
         return;
       }
-      _channelName = 'private-agent.$_agentId.chat';
+      // Account 16 ("Super Admin") reads every user's chat — the same bypass
+      // AgentChatController applies — but NewChatMessage broadcasts on
+      // agent.{reseller_agent_id}.chat, and most of those users belong to
+      // agent 1. Subscribing to agent.16.chat therefore delivered its own 233
+      // users and nothing else, so the list looked like realtime was broken.
+      //
+      // admin.chat carries every message and the auth callback now admits
+      // this account explicitly.
+      _channelName = _agentId == 16
+          ? 'private-admin.chat'
+          : 'private-agent.$_agentId.chat';
       await _connect();
     } catch (e) {
       debugPrint('[AgentRealtime] start error: $e');
@@ -145,6 +181,18 @@ class AgentRealtimeService {
           final msg = _decodeData(evt['data']);
           if (msg.isNotEmpty) _emit(Map<String, dynamic>.from(msg));
           break;
+        case 'chat.read':
+          final data = _decodeData(evt['data']);
+          if (data.isNotEmpty) {
+            _emitTo(_readListeners, Map<String, dynamic>.from(data));
+          }
+          break;
+        case 'chat.typing':
+          final data = _decodeData(evt['data']);
+          if (data.isNotEmpty) {
+            _emitTo(_typingListeners, Map<String, dynamic>.from(data));
+          }
+          break;
         default:
           break;
       }
@@ -189,6 +237,21 @@ class AgentRealtimeService {
       });
     } catch (e) {
       debugPrint('[AgentRealtime] subscribe auth failed: $e');
+    }
+  }
+
+  void _emitTo(
+    List<void Function(Map<String, dynamic>)> listeners,
+    Map<String, dynamic> data,
+  ) {
+    // Copied before iterating: a listener that removes itself in response
+    // would otherwise mutate the list mid-loop.
+    for (final cb in List.of(listeners)) {
+      try {
+        cb(data);
+      } catch (e) {
+        debugPrint('[AgentRealtime] listener error: $e');
+      }
     }
   }
 
