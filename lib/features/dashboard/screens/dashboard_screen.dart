@@ -142,12 +142,10 @@ class DashboardScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return BlocProvider(
-      create: (context) =>
-          DashboardBloc(repository: DashboardRepository())
-            ..add(DashboardStarted()),
-      child: const _DashboardView(),
-    );
+    // The bloc is provided by MainScaffold — the nav badges read the same
+    // state, and a second provider here would run a second 30s poll against
+    // /agent/dashboard.
+    return const _DashboardView();
   }
 }
 

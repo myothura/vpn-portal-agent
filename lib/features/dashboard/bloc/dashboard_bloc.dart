@@ -27,9 +27,13 @@ abstract class DashboardState extends Equatable {
 class DashboardInitial extends DashboardState {}
 
 class DashboardLoading extends DashboardState {
-  final DashboardStats?
-  cachedStats; // Loading ဖြစ်နေတုန်း Cache အဟောင်းပြထားဖို့
+  final DashboardStats? cachedStats;
   DashboardLoading({this.cachedStats});
+
+  // Without props every emit counted as a change, defeating the point of
+  // Equatable on the state class.
+  @override
+  List<Object?> get props => [cachedStats];
 }
 
 class DashboardLoaded extends DashboardState {
@@ -41,8 +45,11 @@ class DashboardLoaded extends DashboardState {
 
 class DashboardError extends DashboardState {
   final String message;
-  final DashboardStats? cachedStats; // Error တက်လဲ Cache ရှိရင် ပြထားမယ်
+  final DashboardStats? cachedStats;
   DashboardError(this.message, {this.cachedStats});
+
+  @override
+  List<Object?> get props => [message, cachedStats];
 }
 
 // --- Bloc ---

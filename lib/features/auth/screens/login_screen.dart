@@ -15,7 +15,7 @@ import 'package:vpn_agent_app/shared_widgets/language_picker_widget.dart';
 
 // Bloc Imports
 import 'package:vpn_agent_app/features/auth/bloc/agent_login_bloc.dart';
-import 'package:vpn_agent_app/features/home/screens/home_screen.dart';
+import 'package:vpn_agent_app/features/scaffold/main_scaffold.dart';
 
 // --- 1. Animation Helpers ---
 class FadeInUp extends StatefulWidget {
@@ -276,7 +276,7 @@ class _LoginViewState extends State<_LoginView>
           if (mounted) {
             Navigator.pushReplacement(
               context,
-              MaterialPageRoute(builder: (context) => const HomeScreen()),
+              MaterialPageRoute(builder: (context) => const MainScaffold()),
             );
           }
         }

@@ -1,12 +1,22 @@
 // File: lib/features/scaffold/main_scaffold.dart
-import 'dart:ui';
 import 'package:flutter/material.dart';
-import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:iconsax/iconsax.dart';
 import 'package:vpn_agent_app/core/theme/app_colors.dart';
+import 'package:vpn_agent_app/features/chat/screens/agent_chat_list_screen.dart';
+import 'package:vpn_agent_app/features/dashboard/bloc/dashboard_bloc.dart';
+import 'package:vpn_agent_app/features/dashboard/repositories/dashboard_repository.dart';
 import 'package:vpn_agent_app/features/dashboard/screens/dashboard_screen.dart';
 import 'package:vpn_agent_app/features/history/screens/renewal_requests_screen.dart';
+import 'package:vpn_agent_app/features/profile/services/profile_service.dart';
 import 'package:vpn_agent_app/features/users/screens/user_management_screen.dart';
 
+/// Root shell. Owns the tab bar and, crucially, the DashboardBloc.
+///
+/// The bloc lives here rather than inside DashboardScreen because the nav
+/// badges read the same numbers the dashboard does. One bloc means one 30s
+/// poll feeding both; providing it per-screen would mean two pollers fetching
+/// the same endpoint.
 class MainScaffold extends StatefulWidget {
   const MainScaffold({super.key});
 
@@ -17,67 +27,252 @@ class MainScaffold extends StatefulWidget {
 class _MainScaffoldState extends State<MainScaffold> {
   int _selectedIndex = 0;
 
-  static const List<Widget> _screens = <Widget>[
-    DashboardScreen(),
-    UserManagementScreen(),
-    RenewalRequestsScreen(),
-  ];
+  /// Chat is permission-gated, so the tab list is built at runtime. Null until
+  /// the profile call answers — the bar renders three tabs meanwhile rather
+  /// than flashing a fourth in and out.
+  bool _canAccessChat = false;
+  bool _permissionsResolved = false;
 
-  void _onItemTapped(int index) {
-    setState(() {
-      _selectedIndex = index;
-    });
+  @override
+  void initState() {
+    super.initState();
+    _loadPermissions();
+  }
+
+  Future<void> _loadPermissions() async {
+    try {
+      final profile = await ProfileService().getProfile();
+      if (!mounted || profile == null) return;
+      setState(() {
+        _canAccessChat = profile['can_access_chat'] == true ||
+            profile['can_access_chat'] == 1 ||
+            profile['id'] == 16;
+        _permissionsResolved = true;
+      });
+    } catch (_) {
+      if (mounted) setState(() => _permissionsResolved = true);
+    }
+  }
+
+  List<_NavItem> get _items => [
+        const _NavItem(
+          icon: Iconsax.category_2,
+          activeIcon: Iconsax.category_25,
+          label: 'Dashboard',
+          screen: DashboardScreen(),
+        ),
+        const _NavItem(
+          icon: Iconsax.profile_2user,
+          activeIcon: Iconsax.profile_2user5,
+          label: 'Users',
+          screen: UserManagementScreen(),
+        ),
+        const _NavItem(
+          icon: Iconsax.repeat,
+          activeIcon: Iconsax.repeat5,
+          label: 'Requests',
+          screen: RenewalRequestsScreen(),
+          badge: _BadgeSource.pendingRequests,
+        ),
+        if (_canAccessChat)
+          const _NavItem(
+            icon: Iconsax.message_text,
+            activeIcon: Iconsax.message_text_15,
+            label: 'Chat',
+            screen: AgentChatListScreen(),
+            badge: _BadgeSource.unreadChat,
+          ),
+      ];
+
+  void _onTap(int index) {
+    if (index == _selectedIndex) return;
+    setState(() => _selectedIndex = index);
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      extendBodyBehindAppBar: true,
-      body: Stack(
-        children: [
-          Container(
-            decoration: const BoxDecoration(
-              gradient: LinearGradient(
-                colors: [Color(0xFF1a1a1a), Color(0xFF2c3e50)],
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
+    final items = _items;
+
+    // Losing the Chat tab (permission revoked mid-session) must not strand the
+    // index past the end of the list.
+    final safeIndex = _selectedIndex.clamp(0, items.length - 1);
+
+    return BlocProvider(
+      create: (_) =>
+          DashboardBloc(repository: DashboardRepository())..add(DashboardStarted()),
+      child: Scaffold(
+        backgroundColor: AppColors.background,
+        // IndexedStack, not a rebuild per tab: switching away and back must
+        // not throw away the user list's scroll position or its loaded pages.
+        body: IndexedStack(
+          index: safeIndex,
+          children: items.map((e) => e.screen).toList(),
+        ),
+        bottomNavigationBar: _NavBar(
+          items: items,
+          currentIndex: safeIndex,
+          onTap: _onTap,
+          ready: _permissionsResolved,
+        ),
+      ),
+    );
+  }
+}
+
+enum _BadgeSource { none, pendingRequests, unreadChat }
+
+class _NavItem {
+  final IconData icon;
+  final IconData activeIcon;
+  final String label;
+  final Widget screen;
+  final _BadgeSource badge;
+
+  const _NavItem({
+    required this.icon,
+    required this.activeIcon,
+    required this.label,
+    required this.screen,
+    this.badge = _BadgeSource.none,
+  });
+}
+
+/// Solid bar. The previous one was a BottomNavigationBar wrapped in a
+/// BackdropFilter over a black 30% fill — a full-width blur repainting behind
+/// every scroll, for an effect invisible on a light background.
+class _NavBar extends StatelessWidget {
+  final List<_NavItem> items;
+  final int currentIndex;
+  final ValueChanged<int> onTap;
+  final bool ready;
+
+  const _NavBar({
+    required this.items,
+    required this.currentIndex,
+    required this.onTap,
+    required this.ready,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return BlocBuilder<DashboardBloc, DashboardState>(
+      // Only the two badge numbers affect this bar, so it does not rebuild
+      // when any other dashboard figure moves.
+      buildWhen: (prev, next) =>
+          _counts(prev).toString() != _counts(next).toString(),
+      builder: (context, state) {
+        final counts = _counts(state);
+
+        return Container(
+          decoration: const BoxDecoration(
+            color: AppColors.surface,
+            border: Border(top: BorderSide(color: AppColors.border)),
+          ),
+          child: SafeArea(
+            top: false,
+            child: SizedBox(
+              height: 60,
+              child: Row(
+                children: [
+                  for (var i = 0; i < items.length; i++)
+                    Expanded(
+                      child: _NavButton(
+                        item: items[i],
+                        selected: i == currentIndex,
+                        count: ready ? counts[items[i].badge] ?? 0 : 0,
+                        onTap: () => onTap(i),
+                      ),
+                    ),
+                ],
               ),
             ),
           ),
-          IndexedStack(index: _selectedIndex, children: _screens),
-        ],
-      ),
-      bottomNavigationBar: _buildGlassBottomNavBar(),
+        );
+      },
     );
   }
 
-  Widget _buildGlassBottomNavBar() {
-    return ClipRect(
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 10.0, sigmaY: 10.0),
-        child: BottomNavigationBar(
-          items: const <BottomNavigationBarItem>[
-            BottomNavigationBarItem(
-              icon: FaIcon(FontAwesomeIcons.houseChimney),
-              label: 'Dashboard',
+  Map<_BadgeSource, int> _counts(DashboardState state) {
+    final stats = switch (state) {
+      DashboardLoaded s => s.stats,
+      DashboardLoading s => s.cachedStats,
+      DashboardError s => s.cachedStats,
+      _ => null,
+    };
+    return {
+      _BadgeSource.pendingRequests: stats?.pendingRequestCount ?? 0,
+      _BadgeSource.unreadChat: stats?.unreadChatCount ?? 0,
+    };
+  }
+}
+
+class _NavButton extends StatelessWidget {
+  final _NavItem item;
+  final bool selected;
+  final int count;
+  final VoidCallback onTap;
+
+  const _NavButton({
+    required this.item,
+    required this.selected,
+    required this.count,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final color = selected ? AppColors.accentInk : AppColors.textTertiary;
+
+    return InkWell(
+      onTap: onTap,
+      // No ripple splash across the whole bar segment; the colour and weight
+      // change is the feedback.
+      splashFactory: NoSplash.splashFactory,
+      highlightColor: Colors.transparent,
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Stack(
+            clipBehavior: Clip.none,
+            children: [
+              Icon(selected ? item.activeIcon : item.icon, size: 22, color: color),
+              if (count > 0)
+                Positioned(
+                  top: -5,
+                  left: 13,
+                  child: Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                    constraints: const BoxConstraints(minWidth: 18),
+                    decoration: BoxDecoration(
+                      color: AppColors.danger,
+                      borderRadius: BorderRadius.circular(999),
+                      border: Border.all(color: AppColors.surface, width: 1.5),
+                    ),
+                    child: Text(
+                      count > 99 ? '99+' : '$count',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        color: AppColors.textOnAccent,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w800,
+                        height: 1.4,
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(
+            item.label,
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+              color: color,
             ),
-            BottomNavigationBarItem(
-              icon: FaIcon(FontAwesomeIcons.users),
-              label: 'Users',
-            ),
-            BottomNavigationBarItem(
-              icon: FaIcon(FontAwesomeIcons.solidBell),
-              label: 'Requests',
-            ),
-          ],
-          currentIndex: _selectedIndex,
-          selectedItemColor: AppColors.accentGreen,
-          unselectedItemColor: Colors.white54,
-          onTap: _onItemTapped,
-          backgroundColor: Colors.black.withOpacity(0.3),
-          elevation: 0,
-          type: BottomNavigationBarType.fixed,
-        ),
+          ),
+        ],
       ),
     );
   }

@@ -1,6 +1,11 @@
+import 'package:equatable/equatable.dart';
 import 'package:intl/intl.dart';
 
-class DashboardStats {
+/// Equatable so BlocBuilder can tell a genuinely changed poll from an
+/// identical one. The 30s auto-poll emits a fresh DashboardStats object every
+/// time; without value equality every widget bound to this state rebuilt twice
+/// a minute whether or not a single number had moved.
+class DashboardStats extends Equatable {
   final String agentName;
   final int activeUserCount;
   final int totalUserCount;
@@ -12,7 +17,13 @@ class DashboardStats {
   final int creditsSpent;
   final List<String> recentRequests;
 
-  DashboardStats({
+  /// Bottom-nav badge counts. Deliberately separate from recentRequests.length:
+  /// that list is capped at 5 and falls back to recently-decided rows when
+  /// there is nothing pending, so its length is not a pending count.
+  final int pendingRequestCount;
+  final int unreadChatCount;
+
+  const DashboardStats({
     required this.agentName,
     required this.activeUserCount,
     required this.totalUserCount,
@@ -23,6 +34,8 @@ class DashboardStats {
     required this.creditBalance,
     required this.creditsSpent,
     required this.recentRequests,
+    this.pendingRequestCount = 0,
+    this.unreadChatCount = 0,
   });
 
   factory DashboardStats.fromJson(Map<String, dynamic> json) {
@@ -41,6 +54,8 @@ class DashboardStats {
       recentRequests: json['recent_requests'] != null
           ? List<String>.from(json['recent_requests'])
           : [],
+      pendingRequestCount: json['pending_request_count'] ?? 0,
+      unreadChatCount: json['unread_chat_count'] ?? 0,
     );
   }
 
@@ -56,6 +71,8 @@ class DashboardStats {
       'credit_balance': creditBalance,
       'credits_spent_this_month': creditsSpent,
       'recent_requests': recentRequests,
+      'pending_request_count': pendingRequestCount,
+      'unread_chat_count': unreadChatCount,
     };
   }
 
@@ -79,4 +96,20 @@ class DashboardStats {
   String get firstName {
     return agentName.split(' ').first;
   }
+
+  @override
+  List<Object?> get props => [
+        agentName,
+        activeUserCount,
+        totalUserCount,
+        expiringSoonCount,
+        businessUserCount,
+        onlineUserCount,
+        subAgentCount,
+        creditBalance,
+        creditsSpent,
+        recentRequests,
+        pendingRequestCount,
+        unreadChatCount,
+      ];
 }

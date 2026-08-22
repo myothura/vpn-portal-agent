@@ -3,7 +3,7 @@ import 'package:vpn_agent_app/core/services/notification_service.dart';
 import 'package:vpn_agent_app/core/theme/app_colors.dart';
 import 'package:vpn_agent_app/features/auth/screens/login_screen.dart';
 import 'package:vpn_agent_app/features/auth/services/auth_service.dart';
-import 'package:vpn_agent_app/features/home/screens/home_screen.dart';
+import 'package:vpn_agent_app/features/scaffold/main_scaffold.dart';
 import 'package:vpn_agent_app/shared_widgets/glass_loading_dialog.dart';
 
 class AuthCheckScreen extends StatefulWidget {
@@ -48,7 +48,7 @@ class _AuthCheckScreenState extends State<AuthCheckScreen> {
         print("📱 FCM Token Registered");
 
         Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (context) => const HomeScreen()),
+          MaterialPageRoute(builder: (context) => const MainScaffold()),
         );
       } else {
         Navigator.of(context).pushReplacement(
