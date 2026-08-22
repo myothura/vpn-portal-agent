@@ -70,9 +70,15 @@ class NotificationListService {
     required String body,
   }) async {
     try {
-      // ✅ FIX: Use Dio POST
+      // /agent/notifications/send, not /agent/send-notification.
+      //
+      // The two endpoints do the same job and only one is safe. The old one
+      // checked neither the can_send_notifications permission nor ownership:
+      // a single-user send went to any id in the table, and 'all' reached
+      // every active user on the fleet rather than the sender's own. This one
+      // scopes both to reseller_agent_id, with super-admin exempted.
       final response = await _dio.post(
-        '/agent/send-notification',
+        '/agent/notifications/send',
         data: {'user_id': userId, 'title': title, 'body': body},
       );
 

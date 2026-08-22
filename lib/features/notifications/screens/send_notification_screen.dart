@@ -1,170 +1,16 @@
 import 'dart:async';
-import 'dart:math';
-import 'dart:ui';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:iconsax/iconsax.dart';
-import '../services/notification_list_service.dart';
+
 import 'package:vpn_agent_app/core/theme/app_colors.dart';
-import 'package:vpn_agent_app/features/users/services/user_management_service.dart';
+import 'package:vpn_agent_app/core/theme/app_theme.dart';
+import 'package:vpn_agent_app/shared_widgets/ui/app_surface.dart';
+
+import 'package:vpn_agent_app/features/notifications/services/notification_list_service.dart';
 import 'package:vpn_agent_app/features/users/models/vpn_user_model.dart';
-
-class LiquidGlassContainer extends StatelessWidget {
-  final Widget child;
-  final double blurSigma;
-  final double opacity;
-  final BorderRadius? borderRadius;
-  final EdgeInsetsGeometry padding;
-  final Color? tintColor;
-  final bool withBorder;
-  final VoidCallback? onTap;
-
-  const LiquidGlassContainer({
-    super.key,
-    required this.child,
-    this.blurSigma = 20.0,
-    this.opacity = 0.08,
-    this.borderRadius,
-    this.padding = EdgeInsets.zero,
-    this.tintColor,
-    this.withBorder = true,
-    this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final radius = borderRadius ?? BorderRadius.circular(24);
-    Widget content = ClipRRect(
-      borderRadius: radius,
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: blurSigma, sigmaY: blurSigma),
-        child: Container(
-          padding: padding,
-          decoration: BoxDecoration(
-            color: (tintColor ?? Colors.white).withOpacity(opacity),
-            borderRadius: radius,
-            border: withBorder
-                ? Border.all(color: Colors.white.withOpacity(0.12), width: 1.0)
-                : null,
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [
-                (tintColor ?? Colors.white).withOpacity(opacity + 0.05),
-                (tintColor ?? Colors.white).withOpacity(opacity),
-              ],
-            ),
-          ),
-          child: child,
-        ),
-      ),
-    );
-
-    if (onTap != null) {
-      return GestureDetector(onTap: onTap, child: content);
-    }
-    return content;
-  }
-}
-
-class ScaleButton extends StatefulWidget {
-  final Widget child;
-  final VoidCallback? onTap;
-  final double scaleAmount;
-  const ScaleButton({
-    super.key,
-    required this.child,
-    required this.onTap,
-    this.scaleAmount = 0.95,
-  });
-  @override
-  State<ScaleButton> createState() => _ScaleButtonState();
-}
-
-class _ScaleButtonState extends State<ScaleButton>
-    with SingleTickerProviderStateMixin {
-  late AnimationController _controller;
-  late Animation<double> _scaleAnimation;
-  @override
-  void initState() {
-    super.initState();
-    _controller = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 100),
-    );
-    _scaleAnimation = Tween<double>(
-      begin: 1.0,
-      end: widget.scaleAmount,
-    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeInOut));
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTapDown: (_) => _controller.forward(),
-      onTapUp: (_) {
-        _controller.reverse();
-        widget.onTap?.call();
-        HapticFeedback.lightImpact();
-      },
-      onTapCancel: () => _controller.reverse(),
-      child: ScaleTransition(scale: _scaleAnimation, child: widget.child),
-    );
-  }
-}
-
-class Particle {
-  Offset position;
-  final Color color;
-  final double radius;
-  final Offset velocity;
-  Particle({
-    required this.position,
-    required this.color,
-    required this.radius,
-    required this.velocity,
-  });
-}
-
-class ParticlePainter extends CustomPainter {
-  final List<Particle> particles;
-  final Animation<double> animation;
-
-  ParticlePainter({required this.particles, required this.animation})
-    : super(repaint: animation);
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint();
-    for (var particle in particles) {
-      particle.position += particle.velocity;
-      if (particle.position.dx < 0) {
-        particle.position = Offset(size.width, particle.position.dy);
-      }
-      if (particle.position.dx > size.width) {
-        particle.position = Offset(0, particle.position.dy);
-      }
-      if (particle.position.dy < 0) {
-        particle.position = Offset(particle.position.dx, size.height);
-      }
-      if (particle.position.dy > size.height) {
-        particle.position = Offset(particle.position.dx, 0);
-      }
-      paint.color = particle.color;
-      canvas.drawCircle(particle.position, particle.radius, paint);
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
-}
+import 'package:vpn_agent_app/features/users/services/user_management_service.dart';
 
 class SendNotificationScreen extends StatefulWidget {
   const SendNotificationScreen({super.key});
@@ -173,1002 +19,679 @@ class SendNotificationScreen extends StatefulWidget {
   State<SendNotificationScreen> createState() => _SendNotificationScreenState();
 }
 
-class _SendNotificationScreenState extends State<SendNotificationScreen>
-    with TickerProviderStateMixin {
+class _SendNotificationScreenState extends State<SendNotificationScreen> {
   final _formKey = GlobalKey<FormState>();
   final _titleController = TextEditingController();
   final _bodyController = TextEditingController();
   final _searchController = TextEditingController();
-  final NotificationListService _service = NotificationListService();
-  final UserManagementService _userService = UserManagementService();
 
-  bool _isLoading = false;
-  bool _isBroadcast = false;
+  final _service = NotificationListService();
+  final _userService = UserManagementService();
 
-  String? _selectedUserId;
-  String? _selectedUserName;
-  List<VpnUser> _searchResults = [];
-  bool _isSearching = false;
-  bool _showResults = false;
+  bool _broadcast = false;
+  bool _sending = false;
+
+  VpnUser? _recipient;
+  List<VpnUser> _results = [];
+  bool _searching = false;
   Timer? _debounce;
-
-  late AnimationController _particleController;
-  List<Particle> _particles = [];
-  final Random _random = Random();
-
-  late AnimationController _entranceController;
-  late Animation<double> _fadeAnim;
-  late Animation<Offset> _slideAnim;
 
   @override
   void initState() {
     super.initState();
-
-    _particleController = AnimationController(
-      vsync: this,
-      duration: const Duration(seconds: 30),
-    )..repeat();
-
-    _entranceController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 800),
-    );
-    _fadeAnim = CurvedAnimation(
-      parent: _entranceController,
-      curve: Curves.easeOut,
-    );
-    _slideAnim = Tween<Offset>(begin: const Offset(0, 0.1), end: Offset.zero)
-        .animate(
-          CurvedAnimation(
-            parent: _entranceController,
-            curve: Curves.easeOutQuart,
-          ),
-        );
-    _entranceController.forward();
-
-    _bodyController.addListener(() {
-      if (mounted) setState(() {});
-    });
-
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      final size = MediaQuery.of(context).size;
-      _generateParticles(size);
-    });
-  }
-
-  void _generateParticles(Size size) {
-    _particles = List.generate(40, (index) {
-      return Particle(
-        position: Offset(
-          _random.nextDouble() * size.width,
-          _random.nextDouble() * size.height,
-        ),
-        color: Colors.white.withOpacity(_random.nextDouble() * 0.15),
-        radius: _random.nextDouble() * 2.0,
-        velocity: Offset(
-          (_random.nextDouble() - 0.5) * 0.3,
-          (_random.nextDouble() - 0.5) * 0.3,
-        ),
-      );
-    });
-    if (mounted) setState(() {});
+    // Rebuilds the preview and the send button's enabled state as the message
+    // is typed.
+    _titleController.addListener(_onChanged);
+    _bodyController.addListener(_onChanged);
   }
 
   @override
   void dispose() {
     _debounce?.cancel();
-    _particleController.dispose();
-    _entranceController.dispose();
+    _titleController.removeListener(_onChanged);
+    _bodyController.removeListener(_onChanged);
     _titleController.dispose();
     _bodyController.dispose();
     _searchController.dispose();
     super.dispose();
   }
 
+  void _onChanged() {
+    if (mounted) setState(() {});
+  }
+
+  // ── Recipient ───────────────────────────────────────────────────────────
+
   void _onSearchChanged(String query) {
-    if (_debounce?.isActive ?? false) _debounce!.cancel();
+    _debounce?.cancel();
+
     if (query.trim().isEmpty) {
       setState(() {
-        _searchResults = [];
-        _showResults = false;
-        _isSearching = false;
+        _results = [];
+        _searching = false;
       });
       return;
     }
-    setState(() => _isSearching = true);
+
+    setState(() => _searching = true);
     _debounce = Timer(const Duration(milliseconds: 400), () async {
       final response = await _userService.getVpnUsers(
         page: 1,
         search: query.trim(),
       );
-      if (mounted) {
-        setState(() {
-          _searchResults = response?.users ?? [];
-          _showResults = true;
-          _isSearching = false;
-        });
-      }
+      if (!mounted) return;
+      setState(() {
+        _results = response?.users ?? [];
+        _searching = false;
+      });
     });
   }
 
   void _selectUser(VpnUser user) {
-    setState(() {
-      _selectedUserId = user.id.toString();
-      _selectedUserName = user.username;
-      _searchController.text = user.username;
-      _showResults = false;
-      _searchResults = [];
-    });
+    HapticFeedback.selectionClick();
     FocusScope.of(context).unfocus();
-    HapticFeedback.lightImpact();
-  }
-
-  void _clearSelection() {
     setState(() {
-      _selectedUserId = null;
-      _selectedUserName = null;
+      _recipient = user;
+      _results = [];
       _searchController.clear();
-      _searchResults = [];
-      _showResults = false;
     });
   }
 
-  Future<void> _handleSend() async {
-    if (!_formKey.currentState!.validate()) return;
+  void _clearRecipient() {
+    setState(() {
+      _recipient = null;
+      _results = [];
+      _searchController.clear();
+    });
+  }
 
-    if (!_isBroadcast && _selectedUserId == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text("Please search and select a user first"),
-          backgroundColor: Colors.redAccent,
-          behavior: SnackBarBehavior.floating,
+  // ── Send ────────────────────────────────────────────────────────────────
+
+  bool get _canSend =>
+      _titleController.text.trim().isNotEmpty &&
+      _bodyController.text.trim().isNotEmpty &&
+      (_broadcast || _recipient != null);
+
+  Future<void> _send() async {
+    if (!(_formKey.currentState?.validate() ?? false)) return;
+    if (!_broadcast && _recipient == null) return;
+
+    // A broadcast cannot be recalled and lands on every one of the agent's
+    // users at once, so it is confirmed. A single send is not.
+    if (_broadcast) {
+      final ok = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          icon: const AppIconBadge(
+            icon: Iconsax.send_2,
+            color: AppColors.warning,
+            background: AppColors.warningWash,
+            size: 22,
+            padding: 12,
+          ),
+          title: const Text('Send to everyone?'),
+          content: Text(
+            'This goes to all of your users as a push notification. It cannot '
+            'be recalled.',
+            style: Theme.of(ctx).textTheme.bodyMedium,
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Send to all'),
+            ),
+          ],
         ),
+      );
+      if (ok != true) return;
+    }
+
+    FocusScope.of(context).unfocus();
+    HapticFeedback.mediumImpact();
+    setState(() => _sending = true);
+
+    final success = await _service.sendNotificationToUser(
+      userId: _broadcast ? 'all' : _recipient!.id.toString(),
+      title: _titleController.text.trim(),
+      body: _bodyController.text.trim(),
+    );
+
+    if (!mounted) return;
+    setState(() => _sending = false);
+
+    if (!success) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not send the notification.')),
       );
       return;
     }
 
-    setState(() => _isLoading = true);
-    FocusScope.of(context).unfocus();
-    HapticFeedback.mediumImpact();
-
-    String targetId = _isBroadcast ? 'all' : _selectedUserId!;
-
-    bool success = await _service.sendNotificationToUser(
-      userId: targetId,
-      title: _titleController.text,
-      body: _bodyController.text,
+    final messenger = ScaffoldMessenger.of(context);
+    Navigator.of(context).pop(true);
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(
+          _broadcast
+              ? 'Sent to all your users.'
+              : 'Sent to ${_recipient!.username}.',
+        ),
+      ),
     );
-
-    if (mounted) {
-      setState(() => _isLoading = false);
-      if (success) {
-        Navigator.pop(context);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Row(
-              children: [
-                const Icon(Iconsax.tick_circle, color: Colors.white),
-                const SizedBox(width: 10),
-                Text(
-                  _isBroadcast ? "Sent to ALL Users!" : "Notification Sent!",
-                  style: GoogleFonts.ibmPlexSans(fontWeight: FontWeight.w600),
-                ),
-              ],
-            ),
-            backgroundColor: AppColors.accentGreen,
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text("Failed to send. Please try again."),
-            backgroundColor: Colors.redAccent,
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
-      }
-    }
   }
+
+  // ── Build ───────────────────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: () {
-        FocusScope.of(context).unfocus();
-        setState(() => _showResults = false);
-      },
-      child: Scaffold(
-        backgroundColor: AppColors.darkBackground,
-        extendBodyBehindAppBar: true,
-        resizeToAvoidBottomInset: true,
-        appBar: AppBar(
-          title: Text(
-            _isBroadcast ? "Broadcast" : "Send Notification",
-            style: GoogleFonts.exo2(
-              fontWeight: FontWeight.bold,
-              fontSize: 18,
-              color: Colors.white,
-              letterSpacing: 1.0,
-            ),
-          ),
-          centerTitle: true,
-          backgroundColor: Colors.transparent,
-          elevation: 0,
-          leading: IconButton(
-            icon: Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.05),
-                shape: BoxShape.circle,
-              ),
-              child: const Icon(
-                Iconsax.arrow_left_2,
-                color: Colors.white,
-                size: 20,
-              ),
-            ),
-            onPressed: () => Navigator.pop(context),
-          ),
-        ),
-        body: Stack(
-          fit: StackFit.expand,
+    return Scaffold(
+      backgroundColor: AppColors.background,
+      appBar: AppBar(title: const Text('Send notification')),
+      body: GestureDetector(
+        onTap: () => FocusScope.of(context).unfocus(),
+        child: Column(
           children: [
-            Positioned.fill(
-              child: Container(
-                decoration: const BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    colors: [Color(0xFF0F0F10), Color(0xFF18181C)],
-                  ),
-                ),
-              ),
-            ),
-            CustomPaint(
-              painter: ParticlePainter(
-                particles: _particles,
-                animation: _particleController,
-              ),
-            ),
-            SafeArea(
-              child: FadeTransition(
-                opacity: _fadeAnim,
-                child: SlideTransition(
-                  position: _slideAnim,
-                  child: SingleChildScrollView(
-                    padding: const EdgeInsets.all(24),
-                    physics: const BouncingScrollPhysics(),
-                    child: ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 500),
-                      child: LiquidGlassContainer(
-                        borderRadius: BorderRadius.circular(24),
-                        padding: const EdgeInsets.all(24),
-                        opacity: 0.05,
-                        child: Form(
-                          key: _formKey,
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Center(
-                                child: AnimatedContainer(
-                                  duration: const Duration(milliseconds: 300),
-                                  padding: const EdgeInsets.all(16),
-                                  decoration: BoxDecoration(
-                                    shape: BoxShape.circle,
-                                    color:
-                                        (_isBroadcast
-                                                ? Colors.orangeAccent
-                                                : AppColors.accentGreen)
-                                            .withOpacity(0.1),
-                                    border: Border.all(
-                                      color:
-                                          (_isBroadcast
-                                                  ? Colors.orangeAccent
-                                                  : AppColors.accentGreen)
-                                              .withOpacity(0.3),
-                                    ),
-                                    boxShadow: [
-                                      BoxShadow(
-                                        color:
-                                            (_isBroadcast
-                                                    ? Colors.orangeAccent
-                                                    : AppColors.accentGreen)
-                                                .withOpacity(0.15),
-                                        blurRadius: 20,
-                                      ),
-                                    ],
-                                  ),
-                                  child: Icon(
-                                    _isBroadcast
-                                        ? Iconsax.notification
-                                        : Iconsax.send_1,
-                                    color: _isBroadcast
-                                        ? Colors.orangeAccent
-                                        : AppColors.accentGreen,
-                                    size: 32,
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(height: 24),
-                              _buildSectionLabel(
-                                "RECIPIENT TYPE",
-                                icon: Iconsax.people,
-                              ),
-                              const SizedBox(height: 10),
-                              _buildTypeSelector(),
-                              if (_isBroadcast) ...[
-                                const SizedBox(height: 12),
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 14,
-                                    vertical: 10,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: Colors.orangeAccent.withOpacity(
-                                      0.08,
-                                    ),
-                                    borderRadius: BorderRadius.circular(12),
-                                    border: Border.all(
-                                      color: Colors.orangeAccent.withOpacity(
-                                        0.15,
-                                      ),
-                                    ),
-                                  ),
-                                  child: Row(
-                                    children: [
-                                      Icon(
-                                        Iconsax.danger,
-                                        size: 16,
-                                        color: Colors.orangeAccent.withOpacity(
-                                          0.7,
-                                        ),
-                                      ),
-                                      const SizedBox(width: 10),
-                                      Expanded(
-                                        child: Text(
-                                          "This will send to ALL active users",
-                                          style: GoogleFonts.ibmPlexSans(
-                                            color: Colors.orangeAccent
-                                                .withOpacity(0.8),
-                                            fontSize: 11,
-                                            fontWeight: FontWeight.w600,
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ],
-                              const SizedBox(height: 20),
-                              AnimatedSize(
-                                duration: const Duration(milliseconds: 300),
-                                curve: Curves.easeInOut,
-                                child: !_isBroadcast
-                                    ? Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        children: [
-                                          _buildSectionLabel(
-                                            "SEARCH USER",
-                                            icon: Iconsax.search_normal,
-                                          ),
-                                          const SizedBox(height: 10),
-                                          _buildUserSearch(),
-                                          const SizedBox(height: 24),
-                                        ],
-                                      )
-                                    : const SizedBox.shrink(),
-                              ),
-                              _buildSectionLabel(
-                                "DETAILS",
-                                icon: Iconsax.message_text,
-                              ),
-                              const SizedBox(height: 10),
-                              _buildGlassTextField(
-                                controller: _titleController,
-                                hint: "Subject / Title",
-                                icon: Iconsax.text_block,
-                              ),
-                              const SizedBox(height: 16),
-                              _buildGlassTextField(
-                                controller: _bodyController,
-                                hint: "Type your message content here...",
-                                icon: Iconsax.message_text,
-                                maxLines: 5,
-                              ),
-                              const SizedBox(height: 8),
-                              Align(
-                                alignment: Alignment.centerRight,
-                                child: Text(
-                                  "${_bodyController.text.length} chars",
-                                  style: GoogleFonts.spaceMono(
-                                    color: Colors.white.withOpacity(0.2),
-                                    fontSize: 10,
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(height: 32),
-                              _buildSendButton(),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildTypeSelector() {
-    return Container(
-      height: 52,
-      padding: const EdgeInsets.all(4),
-      decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.04),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.white.withOpacity(0.08)),
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: _buildTypeOption("Single User", !_isBroadcast, Iconsax.user),
-          ),
-          const SizedBox(width: 4),
-          Expanded(
-            child: _buildTypeOption("All Users", _isBroadcast, Iconsax.people),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildTypeOption(String title, bool isSelected, IconData icon) {
-    final Color activeColor = title == "All Users"
-        ? Colors.orangeAccent
-        : AppColors.accentGreen;
-    return GestureDetector(
-      onTap: () {
-        setState(() {
-          _isBroadcast = (title == "All Users");
-          if (_isBroadcast) _clearSelection();
-        });
-        HapticFeedback.lightImpact();
-      },
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
-        decoration: BoxDecoration(
-          color: isSelected
-              ? activeColor.withOpacity(0.18)
-              : Colors.transparent,
-          borderRadius: BorderRadius.circular(12),
-          border: isSelected
-              ? Border.all(color: activeColor.withOpacity(0.35))
-              : null,
-        ),
-        alignment: Alignment.center,
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              icon,
-              size: 16,
-              color: isSelected ? activeColor : Colors.white.withOpacity(0.3),
-            ),
-            const SizedBox(width: 8),
-            Text(
-              title,
-              style: GoogleFonts.exo2(
-                color: isSelected ? activeColor : Colors.white.withOpacity(0.4),
-                fontWeight: FontWeight.bold,
-                fontSize: 13,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildSectionLabel(String text, {Color? accentColor, IconData? icon}) {
-    final color = accentColor ?? AppColors.accentGreen;
-    return Row(
-      children: [
-        Container(
-          width: 3,
-          height: 16,
-          decoration: BoxDecoration(
-            color: color,
-            borderRadius: BorderRadius.circular(2),
-          ),
-        ),
-        const SizedBox(width: 10),
-        if (icon != null) ...[
-          Icon(icon, size: 14, color: color.withOpacity(0.6)),
-          const SizedBox(width: 7),
-        ],
-        Text(
-          text,
-          style: GoogleFonts.exo2(
-            color: Colors.white.withOpacity(0.5),
-            fontSize: 11,
-            fontWeight: FontWeight.bold,
-            letterSpacing: 1.5,
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildUserSearch() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        if (_selectedUserId != null)
-          Container(
-            margin: const EdgeInsets.only(bottom: 12),
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-            decoration: BoxDecoration(
-              color: AppColors.accentGreen.withOpacity(0.06),
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: AppColors.accentGreen.withOpacity(0.2)),
-            ),
-            child: Row(
-              children: [
-                Stack(
-                  children: [
-                    Container(
-                      width: 36,
-                      height: 36,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        gradient: LinearGradient(
-                          colors: [
-                            AppColors.accentGreen.withOpacity(0.25),
-                            Colors.blueAccent.withOpacity(0.1),
-                          ],
-                        ),
-                        border: Border.all(
-                          color: AppColors.accentGreen.withOpacity(0.3),
-                        ),
-                      ),
-                      child: Center(
-                        child: Text(
-                          _selectedUserName != null &&
-                                  _selectedUserName!.isNotEmpty
-                              ? _selectedUserName![0].toUpperCase()
-                              : 'U',
-                          style: GoogleFonts.exo2(
-                            color: Colors.white,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 14,
-                          ),
-                        ),
-                      ),
-                    ),
-                    Positioned(
-                      right: -1,
-                      bottom: -1,
-                      child: Container(
-                        width: 14,
-                        height: 14,
-                        decoration: BoxDecoration(
-                          color: AppColors.accentGreen,
-                          shape: BoxShape.circle,
-                          border: Border.all(
-                            color: const Color(0xFF0F0F10),
-                            width: 1.5,
-                          ),
-                        ),
-                        child: const Icon(
-                          Iconsax.tick_circle,
-                          size: 8,
-                          color: Colors.white,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(width: 12),
-                Expanded(
+            Expanded(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+                physics: const BouncingScrollPhysics(),
+                child: Form(
+                  key: _formKey,
                   child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      Text(
-                        _selectedUserName ?? '',
-                        style: GoogleFonts.exo2(
-                          color: Colors.white,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 14,
-                        ),
+                      const AppSectionHeader(title: 'Who receives this'),
+                      const SizedBox(height: 10),
+                      _AudienceToggle(
+                        broadcast: _broadcast,
+                        // The recipient is kept when switching to broadcast
+                        // and back — discarding it meant an agent comparing
+                        // the two options had to search for the same user
+                        // again.
+                        onChanged: (v) => setState(() => _broadcast = v),
                       ),
-                      const SizedBox(height: 2),
-                      Text(
-                        "Recipient selected",
-                        style: GoogleFonts.ibmPlexSans(
-                          color: AppColors.accentGreen.withOpacity(0.6),
-                          fontSize: 11,
+                      if (!_broadcast) ...[
+                        const SizedBox(height: 12),
+                        _RecipientField(
+                          controller: _searchController,
+                          recipient: _recipient,
+                          results: _results,
+                          searching: _searching,
+                          onChanged: _onSearchChanged,
+                          onSelect: _selectUser,
+                          onClear: _clearRecipient,
                         ),
+                      ],
+                      const SizedBox(height: 22),
+                      const AppSectionHeader(title: 'Message'),
+                      const SizedBox(height: 10),
+                      TextFormField(
+                        controller: _titleController,
+                        textInputAction: TextInputAction.next,
+                        maxLength: 65,
+                        // 65 is roughly where Android and iOS truncate a
+                        // notification title; past it the tail is written but
+                        // never read.
+                        buildCounter:
+                            (
+                              _, {
+                              required currentLength,
+                              required isFocused,
+                              maxLength,
+                            }) => currentLength < 50
+                            ? null
+                            : Text(
+                                '$currentLength / $maxLength',
+                                style: Theme.of(
+                                  context,
+                                ).textTheme.bodySmall?.copyWith(fontSize: 10),
+                              ),
+                        decoration: const InputDecoration(labelText: 'Title'),
+                        validator: (v) =>
+                            (v ?? '').trim().isEmpty ? 'Enter a title' : null,
+                      ),
+                      const SizedBox(height: 8),
+                      TextFormField(
+                        controller: _bodyController,
+                        maxLines: 4,
+                        maxLength: 240,
+                        buildCounter:
+                            (
+                              _, {
+                              required currentLength,
+                              required isFocused,
+                              maxLength,
+                            }) => currentLength < 180
+                            ? null
+                            : Text(
+                                '$currentLength / $maxLength',
+                                style: Theme.of(
+                                  context,
+                                ).textTheme.bodySmall?.copyWith(fontSize: 10),
+                              ),
+                        decoration: const InputDecoration(
+                          labelText: 'Message',
+                          alignLabelWithHint: true,
+                        ),
+                        validator: (v) =>
+                            (v ?? '').trim().isEmpty ? 'Enter a message' : null,
+                      ),
+                      const SizedBox(height: 22),
+                      const AppSectionHeader(title: 'Preview'),
+                      const SizedBox(height: 10),
+                      _Preview(
+                        title: _titleController.text.trim(),
+                        body: _bodyController.text.trim(),
                       ),
                     ],
                   ),
                 ),
-                ScaleButton(
-                  onTap: _clearSelection,
-                  child: Container(
-                    padding: const EdgeInsets.all(6),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.06),
-                      borderRadius: BorderRadius.circular(8),
+              ),
+            ),
+            _SendBar(
+              broadcast: _broadcast,
+              recipient: _recipient?.username,
+              enabled: _canSend,
+              busy: _sending,
+              onSend: _send,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ── Audience ──────────────────────────────────────────────────────────────
+
+class _AudienceToggle extends StatelessWidget {
+  final bool broadcast;
+  final ValueChanged<bool> onChanged;
+
+  const _AudienceToggle({required this.broadcast, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Expanded(
+          child: _AudienceOption(
+            icon: Iconsax.user,
+            label: 'One user',
+            selected: !broadcast,
+            color: AppColors.accentInk,
+            onTap: () => onChanged(false),
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: _AudienceOption(
+            icon: Iconsax.profile_2user,
+            label: 'All my users',
+            selected: broadcast,
+            // Amber, not brand green: this option reaches everyone at once and
+            // should not look like the safe default.
+            color: AppColors.warning,
+            onTap: () => onChanged(true),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _AudienceOption extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final bool selected;
+  final Color color;
+  final VoidCallback onTap;
+
+  const _AudienceOption({
+    required this.icon,
+    required this.label,
+    required this.selected,
+    required this.color,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: selected ? color : AppColors.surface,
+      borderRadius: BorderRadius.circular(AppTheme.radiusMd),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(AppTheme.radiusMd),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 13),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(AppTheme.radiusMd),
+            border: Border.all(color: selected ? color : AppColors.border),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                icon,
+                size: 17,
+                color: selected
+                    ? AppColors.textOnAccent
+                    : AppColors.textTertiary,
+              ),
+              const SizedBox(width: 8),
+              Flexible(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w700,
+                    color: selected
+                        ? AppColors.textOnAccent
+                        : AppColors.textSecondary,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _RecipientField extends StatelessWidget {
+  final TextEditingController controller;
+  final VpnUser? recipient;
+  final List<VpnUser> results;
+  final bool searching;
+  final ValueChanged<String> onChanged;
+  final ValueChanged<VpnUser> onSelect;
+  final VoidCallback onClear;
+
+  const _RecipientField({
+    required this.controller,
+    required this.recipient,
+    required this.results,
+    required this.searching,
+    required this.onChanged,
+    required this.onSelect,
+    required this.onClear,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = Theme.of(context).textTheme;
+
+    // Once chosen, the field is replaced by the choice. Leaving a search box
+    // with the name typed into it left it ambiguous whether the send was
+    // aimed at that user or at whatever was in the box.
+    if (recipient != null) {
+      return AppCard(
+        radius: AppTheme.radiusMd,
+        showShadow: false,
+        padding: const EdgeInsets.fromLTRB(12, 10, 6, 10),
+        tone: SurfaceTone.wash,
+        washColor: AppColors.accentWash,
+        child: Row(
+          children: [
+            const AppIconBadge(
+              icon: Iconsax.user,
+              color: AppColors.accentInk,
+              background: AppColors.surface,
+              size: 15,
+              padding: 8,
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                recipient!.username,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: t.bodyLarge?.copyWith(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+            IconButton(
+              onPressed: onClear,
+              icon: const Icon(Iconsax.close_circle, size: 18),
+              color: AppColors.textTertiary,
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        TextField(
+          controller: controller,
+          onChanged: onChanged,
+          decoration: InputDecoration(
+            hintText: 'Search by username',
+            prefixIcon: const Icon(Iconsax.search_normal_1, size: 18),
+            suffixIcon: searching
+                ? const Padding(
+                    padding: EdgeInsets.all(14),
+                    child: SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
                     ),
-                    child: Icon(
-                      Iconsax.close_circle,
-                      color: Colors.white.withOpacity(0.4),
-                      size: 16,
+                  )
+                : null,
+          ),
+        ),
+        if (results.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          AppCard(
+            radius: AppTheme.radiusMd,
+            padding: EdgeInsets.zero,
+            child: Column(
+              children: [
+                // Capped: a search matching hundreds should not turn the form
+                // into a user list.
+                for (final user in results.take(6))
+                  InkWell(
+                    onTap: () => onSelect(user),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 11,
+                      ),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              user.username,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: t.bodyLarge?.copyWith(fontSize: 14),
+                            ),
+                          ),
+                          if (user.planName != null)
+                            Text(user.planName!, style: t.bodySmall),
+                        ],
+                      ),
                     ),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+// ── Preview ───────────────────────────────────────────────────────────────
+
+/// What the notification will look like on the user's phone.
+///
+/// The agent is writing for a lock screen, not a form: the truncation and the
+/// weight are the point, and neither was visible while typing into two plain
+/// fields.
+class _Preview extends StatelessWidget {
+  final String title;
+  final String body;
+
+  const _Preview({required this.title, required this.body});
+
+  @override
+  Widget build(BuildContext context) {
+    final t = Theme.of(context).textTheme;
+    final empty = title.isEmpty && body.isEmpty;
+
+    return AppCard(
+      radius: AppTheme.radiusMd,
+      padding: const EdgeInsets.all(12),
+      tone: SurfaceTone.wash,
+      washColor: AppColors.surfaceAlt,
+      showShadow: false,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 34,
+            height: 34,
+            decoration: BoxDecoration(
+              color: AppColors.ink,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            alignment: Alignment.center,
+            // A 128px copy: assets/icon/icon.png is the 976KB launcher source
+            // and is not declared as an asset anyway, so this preview was
+            // always falling back to the placeholder glyph.
+            child: Image.asset(
+              'assets/images/app_mark.png',
+              width: 26,
+              height: 26,
+              errorBuilder: (_, __, ___) => const Icon(
+                Iconsax.notification,
+                size: 16,
+                color: AppColors.accent,
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  empty ? 'Title' : (title.isEmpty ? 'Title' : title),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: t.bodyLarge?.copyWith(
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w700,
+                    color: title.isEmpty
+                        ? AppColors.textTertiary
+                        : AppColors.textPrimary,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  body.isEmpty ? 'Your message appears here.' : body,
+                  maxLines: 3,
+                  overflow: TextOverflow.ellipsis,
+                  style: t.bodySmall?.copyWith(
+                    color: body.isEmpty
+                        ? AppColors.textTertiary
+                        : AppColors.textSecondary,
                   ),
                 ),
               ],
             ),
           ),
-        if (_selectedUserId == null) ...[
-          LiquidGlassContainer(
-            opacity: 0.05,
-            borderRadius: BorderRadius.circular(16),
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: SizedBox(
-              height: 50,
-              child: Row(
+          const SizedBox(width: 8),
+          Text('now', style: t.bodySmall?.copyWith(fontSize: 10)),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Send bar ──────────────────────────────────────────────────────────────
+
+class _SendBar extends StatelessWidget {
+  final bool broadcast;
+  final String? recipient;
+  final bool enabled;
+  final bool busy;
+  final VoidCallback onSend;
+
+  const _SendBar({
+    required this.broadcast,
+    required this.recipient,
+    required this.enabled,
+    required this.busy,
+    required this.onSend,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = Theme.of(context).textTheme;
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+      decoration: const BoxDecoration(
+        color: AppColors.surface,
+        border: Border(top: BorderSide(color: AppColors.border)),
+      ),
+      child: SafeArea(
+        top: false,
+        child: Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(
-                    Iconsax.search_normal,
-                    color: Colors.white.withOpacity(0.4),
-                    size: 20,
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: TextField(
-                      controller: _searchController,
-                      style: GoogleFonts.ibmPlexSans(
-                        color: Colors.white,
-                        fontSize: 14,
-                      ),
-                      cursorColor: AppColors.accentGreen,
-                      onChanged: _onSearchChanged,
-                      onTap: () {
-                        if (_searchController.text.isNotEmpty) {
-                          setState(() => _showResults = true);
-                        }
-                      },
-                      decoration: InputDecoration(
-                        hintText: "Type username to search...",
-                        hintStyle: GoogleFonts.ibmPlexSans(
-                          color: Colors.white.withOpacity(0.3),
-                          fontSize: 14,
-                        ),
-                        border: InputBorder.none,
-                        contentPadding: const EdgeInsets.only(bottom: 2),
-                      ),
+                  Text('Sending to', style: t.bodySmall),
+                  Text(
+                    broadcast
+                        ? 'All your users'
+                        : (recipient ?? 'No one selected'),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: t.bodyLarge?.copyWith(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                      color: broadcast
+                          ? AppColors.warning
+                          : (recipient == null
+                                ? AppColors.textTertiary
+                                : AppColors.textPrimary),
                     ),
                   ),
-                  if (_isSearching)
-                    const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(
-                        color: AppColors.accentGreen,
-                        strokeWidth: 2,
-                      ),
-                    ),
-                  if (!_isSearching && _searchController.text.isNotEmpty)
-                    ScaleButton(
-                      onTap: () {
-                        _searchController.clear();
-                        setState(() {
-                          _searchResults = [];
-                          _showResults = false;
-                        });
-                      },
-                      child: Icon(
-                        Iconsax.close_circle,
-                        size: 18,
-                        color: Colors.white.withOpacity(0.4),
-                      ),
-                    ),
                 ],
               ),
             ),
-          ),
-          if (_showResults)
-            Container(
-              margin: const EdgeInsets.only(top: 8),
-              constraints: const BoxConstraints(maxHeight: 220),
-              decoration: BoxDecoration(
-                color: const Color(0xFF1C1C1E),
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: Colors.white.withOpacity(0.08)),
-              ),
-              child: _searchResults.isEmpty
-                  ? Padding(
-                      padding: const EdgeInsets.all(20),
-                      child: Center(
-                        child: Text(
-                          "No users found",
-                          style: GoogleFonts.ibmPlexSans(
-                            color: Colors.white.withOpacity(0.3),
-                            fontSize: 13,
-                          ),
-                        ),
+            const SizedBox(width: 12),
+            FilledButton.icon(
+              onPressed: enabled && !busy ? onSend : null,
+              icon: busy
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: AppColors.textOnAccent,
                       ),
                     )
-                  : ListView.separated(
-                      shrinkWrap: true,
-                      padding: const EdgeInsets.symmetric(vertical: 6),
-                      itemCount: _searchResults.length,
-                      separatorBuilder: (_, __) => Divider(
-                        color: Colors.white.withOpacity(0.05),
-                        height: 1,
-                        indent: 56,
-                      ),
-                      itemBuilder: (context, index) {
-                        final user = _searchResults[index];
-                        return Material(
-                          color: Colors.transparent,
-                          child: InkWell(
-                            borderRadius: BorderRadius.circular(10),
-                            onTap: () => _selectUser(user),
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 14,
-                                vertical: 10,
-                              ),
-                              child: Row(
-                                children: [
-                                  Container(
-                                    width: 32,
-                                    height: 32,
-                                    decoration: BoxDecoration(
-                                      shape: BoxShape.circle,
-                                      color: AppColors.accentGreen.withOpacity(
-                                        0.15,
-                                      ),
-                                    ),
-                                    child: Center(
-                                      child: Text(
-                                        user.username.isNotEmpty
-                                            ? user.username[0].toUpperCase()
-                                            : 'U',
-                                        style: GoogleFonts.exo2(
-                                          color: AppColors.accentGreen,
-                                          fontWeight: FontWeight.bold,
-                                          fontSize: 12,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 12),
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          user.username,
-                                          style: GoogleFonts.exo2(
-                                            color: Colors.white,
-                                            fontWeight: FontWeight.w600,
-                                            fontSize: 13,
-                                          ),
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                        ),
-                                        const SizedBox(height: 2),
-                                        Text(
-                                          user.planName ?? 'No Plan',
-                                          style: GoogleFonts.ibmPlexSans(
-                                            color: Colors.white.withOpacity(
-                                              0.35,
-                                            ),
-                                            fontSize: 11,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                  if (user.hasBusinessPlan)
-                                    Container(
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 6,
-                                        vertical: 2,
-                                      ),
-                                      decoration: BoxDecoration(
-                                        color: const Color(
-                                          0xFFF97316,
-                                        ).withOpacity(0.12),
-                                        borderRadius: BorderRadius.circular(5),
-                                      ),
-                                      child: Text(
-                                        "BIZ",
-                                        style: GoogleFonts.exo2(
-                                          color: const Color(0xFFF97316),
-                                          fontSize: 9,
-                                          fontWeight: FontWeight.bold,
-                                        ),
-                                      ),
-                                    ),
-                                  const SizedBox(width: 8),
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 6,
-                                      vertical: 2,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      color: user.status == 'active'
-                                          ? AppColors.accentGreen.withOpacity(
-                                              0.12,
-                                            )
-                                          : Colors.redAccent.withOpacity(0.12),
-                                      borderRadius: BorderRadius.circular(5),
-                                    ),
-                                    child: Text(
-                                      user.status == 'active'
-                                          ? "Active"
-                                          : "Expired",
-                                      style: GoogleFonts.ibmPlexSans(
-                                        color: user.status == 'active'
-                                            ? AppColors.accentGreen
-                                            : Colors.redAccent,
-                                        fontSize: 9,
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                        );
-                      },
-                    ),
+                  : const Icon(Iconsax.send_1, size: 17),
+              label: Text(busy ? 'Sending' : 'Send'),
             ),
-        ],
-      ],
-    );
-  }
-
-  Widget _buildGlassTextField({
-    required TextEditingController controller,
-    required String hint,
-    required IconData icon,
-    int maxLines = 1,
-  }) {
-    final Color focusColor = _isBroadcast
-        ? Colors.orangeAccent
-        : AppColors.accentGreen;
-    return TextFormField(
-      controller: controller,
-      maxLines: maxLines,
-      style: GoogleFonts.ibmPlexSans(
-        color: Colors.white,
-        fontWeight: FontWeight.w500,
-      ),
-      cursorColor: focusColor,
-      validator: (value) => value!.isEmpty ? "This field is required" : null,
-      decoration: InputDecoration(
-        hintText: hint,
-        hintStyle: GoogleFonts.ibmPlexSans(
-          color: Colors.white.withOpacity(0.25),
-        ),
-        filled: true,
-        fillColor: Colors.white.withOpacity(0.04),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(16),
-          borderSide: BorderSide(color: Colors.white.withOpacity(0.08)),
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(16),
-          borderSide: BorderSide(color: focusColor.withOpacity(0.5)),
-        ),
-        errorBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(16),
-          borderSide: BorderSide(color: Colors.redAccent.withOpacity(0.5)),
-        ),
-        focusedErrorBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(16),
-          borderSide: const BorderSide(color: Colors.redAccent),
-        ),
-        contentPadding: const EdgeInsets.all(16),
-        prefixIcon: Padding(
-          padding: EdgeInsets.only(
-            left: 16,
-            right: 12,
-            bottom: maxLines > 1 ? (maxLines * 18.0) : 0,
-          ),
-          child: Icon(icon, color: Colors.white.withOpacity(0.35), size: 20),
-        ),
-        errorStyle: GoogleFonts.ibmPlexSans(
-          color: Colors.redAccent,
-          fontSize: 11,
-        ),
-      ),
-    );
-  }
-
-  Widget _buildSendButton() {
-    final Color btnColor = _isBroadcast
-        ? Colors.orangeAccent
-        : AppColors.accentGreen;
-    final bool canSend = _isBroadcast || _selectedUserId != null;
-
-    return ScaleButton(
-      onTap: _isLoading ? null : _handleSend,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 300),
-        width: double.infinity,
-        height: 54,
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            colors: canSend
-                ? [btnColor.withOpacity(0.8), btnColor]
-                : [
-                    Colors.white.withOpacity(0.05),
-                    Colors.white.withOpacity(0.03),
-                  ],
-          ),
-          borderRadius: BorderRadius.circular(16),
-          border: canSend
-              ? null
-              : Border.all(color: Colors.white.withOpacity(0.08)),
-          boxShadow: canSend
-              ? [
-                  BoxShadow(
-                    color: btnColor.withOpacity(0.25),
-                    blurRadius: 16,
-                    offset: const Offset(0, 4),
-                  ),
-                ]
-              : [],
-        ),
-        child: Center(
-          child: _isLoading
-              ? const SizedBox(
-                  width: 24,
-                  height: 24,
-                  child: CircularProgressIndicator(
-                    color: Colors.white,
-                    strokeWidth: 2,
-                  ),
-                )
-              : Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(
-                      _isBroadcast ? Iconsax.notification : Iconsax.send_1,
-                      color: canSend
-                          ? Colors.white
-                          : Colors.white.withOpacity(0.3),
-                      size: 20,
-                    ),
-                    const SizedBox(width: 10),
-                    Text(
-                      _isBroadcast ? "SEND BROADCAST" : "SEND MESSAGE",
-                      style: GoogleFonts.exo2(
-                        color: canSend
-                            ? Colors.white
-                            : Colors.white.withOpacity(0.3),
-                        fontSize: 14,
-                        fontWeight: FontWeight.bold,
-                        letterSpacing: 1.2,
-                      ),
-                    ),
-                  ],
-                ),
+          ],
         ),
       ),
     );
