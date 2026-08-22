@@ -7,6 +7,8 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 
+import 'package:vpn_agent_app/core/services/remote_config_service.dart';
+
 import 'package:vpn_agent_app/core/providers/locale_provider.dart';
 import 'package:vpn_agent_app/features/auth/screens/auth_check_screen.dart';
 import 'package:vpn_agent_app/l10n/app_localizations.dart';
@@ -33,6 +35,13 @@ void main() async {
   } catch (e) {
     print("Firebase Init Error: $e");
   }
+
+  // Must complete BEFORE runApp: ApiClient is a singleton whose
+  // BaseOptions.baseUrl is seeded at first construction, and AuthCheckScreen
+  // fires an API call immediately. Fetching later would pin the first request
+  // to the DPI-blocked default host and burn a connect timeout before the
+  // fallback chain could rotate.
+  await RemoteConfigService().initialize();
 
   await SystemChrome.setPreferredOrientations([
     DeviceOrientation.portraitUp,

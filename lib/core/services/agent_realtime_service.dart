@@ -4,7 +4,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:web_socket_channel/status.dart' as ws_status;
-import 'package:vpn_agent_app/core/api/api_config.dart';
+import 'package:vpn_agent_app/core/services/remote_config_service.dart';
 import 'package:vpn_agent_app/features/auth/services/auth_service.dart';
 
 /// Realtime chat for the agent app via Laravel Reverb (Pusher protocol).
@@ -15,7 +15,38 @@ class AgentRealtimeService {
   static final AgentRealtimeService instance = AgentRealtimeService._();
 
   static const String _appKey = 'ge9g2emzlgdbhoq877w7';
-  static const String _host = 'control.vpnportal.org';
+
+  // Ordered, de-duplicated, non-empty realtime hosts from RemoteConfig.
+  // These are BARE HOSTS (no scheme, no /api) — the HTTP keys are full URLs
+  // and the two formats are not interchangeable.
+  static List<String> get _hosts {
+    final rc = RemoteConfigService();
+    final raw = <String>[
+      rc.realtimeHost,
+      rc.realtimeBackupHost,
+      rc.realtimeBackupHost2,
+      rc.realtimeBackupHost3,
+    ];
+    final seen = <String>{};
+    final out = <String>[];
+    for (final h in raw) {
+      if (h.isEmpty) continue;
+      if (seen.add(h)) out.add(h);
+    }
+    if (out.isEmpty) {
+      out.addAll(['control.vpnportal.org', 'my-backup-api.org']);
+    }
+    return out;
+  }
+
+  // Advances on each failed reconnect so successive retries walk
+  // primary -> backup -> backup2 -> backup3 -> primary ...
+  int _hostIndex = 0;
+
+  String get _host {
+    final hosts = _hosts;
+    return hosts[_hostIndex % hosts.length];
+  }
 
   final AuthService _auth = AuthService();
   final Dio _dio = Dio(BaseOptions(
@@ -140,7 +171,7 @@ class AgentRealtimeService {
     if (_channelName == null || _socketId == null) return;
     try {
       final res = await _dio.post(
-        '${ApiConfig.baseUrl}/broadcasting/auth',
+        'https://$_host/api/broadcasting/auth',
         data: {'socket_id': _socketId, 'channel_name': _channelName},
         options: Options(headers: {
           'Authorization': 'Bearer $_token',
@@ -196,7 +227,8 @@ class AgentRealtimeService {
     _reconnectTimer?.cancel();
     final delay = Duration(seconds: (2 * (_reconnectAttempts + 1)).clamp(2, 30));
     _reconnectAttempts++;
-    debugPrint('[AgentRealtime] reconnect in ${delay.inSeconds}s');
+    _hostIndex++;
+    debugPrint('[AgentRealtime] reconnect in ${delay.inSeconds}s via $_host');
     _reconnectTimer = Timer(delay, () => _connect());
   }
 

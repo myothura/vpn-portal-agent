@@ -1,3 +1,5 @@
+import 'package:vpn_agent_app/core/api/api_config.dart';
+
 class PaymentMethod {
   String id;
   String bankName;
@@ -21,7 +23,7 @@ class PaymentMethod {
       bankName: json['bank_name'] ?? '',
       accountName: json['account_name'] ?? '',
       accountNumber: json['account_number'] ?? '',
-      qrCodeUrl: json['qr_code_full_url'],
+      qrCodeUrl: ApiConfig.resolveMediaUrl(json['qr_code_full_url']),
     );
   }
 

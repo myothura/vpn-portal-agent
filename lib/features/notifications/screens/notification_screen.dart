@@ -1,13 +1,12 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:math';
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:iconsax/iconsax.dart';
-import 'package:http/http.dart' as http;
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:vpn_agent_app/core/api/api_client.dart';
+import 'package:vpn_agent_app/core/api/api_config.dart';
 import '../models/notification_model.dart';
 import '../services/notification_list_service.dart';
 import 'send_notification_screen.dart';
@@ -299,20 +298,13 @@ class _NotificationScreenState extends State<NotificationScreen>
 
   Future<void> _checkPermissionFromServer() async {
     try {
-      SharedPreferences prefs = await SharedPreferences.getInstance();
-      String? token = prefs.getString('access_token');
-
-      final response = await http.get(
-        Uri.parse("https://control.vpnportal.org/api/agent/profile"),
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          'Authorization': 'Bearer $token',
-        },
-      );
+      // Routed through ApiClient so this inherits the RemoteConfig domain
+      // fallback chain. As a raw http.get on a hard-coded host it bypassed
+      // _FallbackInterceptor entirely and died on the DPI-blocked domain.
+      final response = await ApiClient().dio.get(ApiConfig.agentProfile);
 
       if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
+        final data = response.data;
         bool permission = false;
         if (data['can_send_notifications'] == true ||
             data['can_send_notifications'] == 1) {

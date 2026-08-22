@@ -1,3 +1,5 @@
+import 'package:vpn_agent_app/core/api/api_config.dart';
+
 class RenewalRequest {
   final int id;
   final String vpnUserName;
@@ -35,7 +37,7 @@ class RenewalRequest {
           : 'Device Slot',
       durationMonths: json['duration_months'],
       status: json['status'],
-      screenshotUrl: json['payment_screenshot_url'] ?? '',
+      screenshotUrl: ApiConfig.resolveMediaUrl(json['payment_screenshot_url']) ?? '',
       createdAt: json['created_at'],
 
       // ✅ Bind Data from Backend API

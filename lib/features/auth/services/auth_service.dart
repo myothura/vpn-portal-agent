@@ -1,4 +1,5 @@
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vpn_agent_app/core/api/api_client.dart'; // Import ApiClient
 import 'package:vpn_agent_app/core/api/api_config.dart';
@@ -11,13 +12,38 @@ class AuthService {
 
   // ⚠️ Login ဝင်တဲ့အချိန်မှာ ApiClient ကို သုံးလို့မရပါ (Circular Dependency ဖြစ်တတ်လို့ပါ)
   // ဒါကြောင့် Login အတွက် သီးသန့် Dio (Clean Dio) ကို တည်ဆောက်ထားပါတယ်
+  // No baseUrl here: login must walk the RemoteConfig domain chain itself.
+  // ApiClient can't be reused (circular dependency, and there is no token yet),
+  // so the candidate list is walked explicitly in login().
+  //
+  // LogInterceptor is debug-only — it prints the full login response, which
+  // contains the Sanctum token, and that must never reach a release build's
+  // device log.
   final Dio _publicDio = Dio(
     BaseOptions(
-      baseUrl: ApiConfig.baseUrl,
       connectTimeout: const Duration(seconds: 15),
       receiveTimeout: const Duration(seconds: 15),
     ),
-  )..interceptors.add(LogInterceptor(responseBody: true, requestBody: true));
+  )..interceptors.addAll([
+      if (kDebugMode) LogInterceptor(responseBody: true, requestBody: true),
+    ]);
+
+  /// Ordered, de-duplicated, non-empty base URLs from RemoteConfig.
+  List<String> get _candidates {
+    final raw = <String>[
+      ApiConfig.baseUrl,
+      ApiConfig.backupUrl,
+      ApiConfig.backupUrl2,
+      ApiConfig.backupUrl3,
+    ];
+    final seen = <String>{};
+    final out = <String>[];
+    for (final u in raw) {
+      if (u.isEmpty) continue;
+      if (seen.add(u)) out.add(u);
+    }
+    return out;
+  }
 
   // ⭐️ Login ဝင်ပြီးနောက်ပိုင်းသုံးမည့် Authenticated Request များအတွက်
   // ApiClient ထဲက dio ကို လှမ်းယူသုံးပါမယ် (Auto Token Insert & Auto Logout ပါပြီးသားဖြစ်မယ်)
@@ -26,10 +52,26 @@ class AuthService {
   Future<bool> login(String email, String password) async {
     try {
       // Login လုပ်ချိန်မှာ Interceptor မပါတဲ့ _publicDio ကိုသုံးပါ
-      final response = await _publicDio.post(
-        ApiConfig.agentLogin,
-        data: {'email': email, 'password': password},
-      );
+      Response? response;
+      DioException? lastErr;
+      for (final base in _candidates) {
+        try {
+          response = await _publicDio.post(
+            '$base${ApiConfig.agentLogin}',
+            data: {'email': email, 'password': password},
+          );
+          break;
+        } on DioException catch (e) {
+          // Auth failures are answers, not transport failures — stop rotating.
+          if (e.response != null) {
+            lastErr = e;
+            break;
+          }
+          debugPrint('AuthService: login candidate failed: $base');
+          lastErr = e;
+        }
+      }
+      if (response == null) throw lastErr!;
 
       if (response.statusCode == 200 && response.data['token'] != null) {
         final String token = response.data['token'];

@@ -11,6 +11,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import 'package:vpn_agent_app/core/theme/app_colors.dart';
 import 'package:vpn_agent_app/features/chat/services/agent_chat_service.dart';
+import 'package:vpn_agent_app/core/api/api_config.dart';
 
 class LiquidGlassContainer extends StatelessWidget {
   final Widget child;
@@ -816,7 +817,7 @@ class _AgentChatDetailScreenState extends State<AgentChatDetailScreen>
 
   Widget _buildTextBubble(Map<String, dynamic> msg, bool isAdmin) {
     final message = msg['message'] ?? '';
-    final imageUrl = msg['image_url'];
+    final imageUrl = ApiConfig.resolveMediaUrl(msg['image_url']);
     final time = msg['created_at'] ?? '';
     final isRead = msg['is_read'] == true || msg['is_read'] == 1;
     final isSending = msg['_sending'] == true;
@@ -1075,7 +1076,7 @@ class _AgentChatDetailScreenState extends State<AgentChatDetailScreen>
     final type = meta['type'] ?? 'plan_renewal';
     final months = meta['duration_months'] ?? 0;
     final extraSlots = meta['extra_device_slots'] ?? 0;
-    final imageUrl = msg['image_url'];
+    final imageUrl = ApiConfig.resolveMediaUrl(msg['image_url']);
     final time = msg['created_at'] ?? '';
     const reqColor = Colors.amberAccent;
 
