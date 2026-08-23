@@ -1,7 +1,7 @@
 name: vpn_agent_app
 description: "StarLink VPN Agent App"
 publish_to: 'none' 
-version: 2.0.0+10
+version: 3.0.0+11
 
 environment:
   sdk: ^3.9.2
@@ -52,6 +52,7 @@ dev_dependencies:
     sdk: flutter
 
   flutter_lints: ^5.0.0
+  flutter_native_splash: ^2.4.8
 
 flutter:
   uses-material-design: true
@@ -70,9 +71,25 @@ flutter_launcher_icons:
   ios: true
   image_path: "assets/icon/icon.png"
   min_sdk_android: 21
-  # The source is a circle with transparent corners so Android's launcher and
-  # its 12+ splash both mask cleanly. iOS rejects any icon carrying an alpha
-  # channel at submission, and it rounds the corners itself, so the alpha is
-  # flattened onto the artwork's own background colour for that platform only.
+  # The artwork carries its own pale backdrop rather than transparency, so
+  # nothing needs flattening for iOS — it rejects icons with an alpha channel
+  # at submission and rounds the corners itself.
   remove_alpha_ios: true
-  background_color_ios: "#0A3B22"
+  background_color_ios: "#F2F3F5"
+
+flutter_native_splash:
+  # Generated rather than hand-written. values-v31/styles.xml was maintained by
+  # hand, so every icon change meant three edits and a set of manually scaled
+  # mipmaps.
+  color: "#F2F3F5"
+  image: assets/icon/splash.png
+
+  android_12:
+    # Android 12 masks a 240dp circle out of the 288dp slot; the package sizes
+    # the asset for that, where a full-bleed image would be clipped.
+    image: assets/icon/splash.png
+    color: "#F2F3F5"
+
+  android: true
+  ios: true
+  web: false

@@ -351,69 +351,76 @@ class _RenewalRequestsScreenState extends State<RenewalRequestsScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.background,
-      body: SafeArea(
-        bottom: false,
-        child: Column(
-          children: [
-            // Plain gap, not SafeArea.minimum: that only applies when the
-            // value exceeds the system inset, and the status bar is already
-            // taller than any sensible padding here — so it did nothing.
-            const SizedBox(height: 14),
-            SizedBox(
-              height: 36,
-              child: ListView.separated(
-                scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                itemCount: _tabs.length,
-                separatorBuilder: (_, __) => const SizedBox(width: 8),
-                itemBuilder: (context, i) {
-                  final (status, label, color) = _tabs[i];
-                  return _FilterChip(
-                    label: label,
-                    color: color,
-                    count: _counts[status ?? 'all'] ?? 0,
-                    selected: _filter == status,
-                    onTap: () => _onFilterChanged(status),
-                  );
-                },
-              ),
-            ),
-            const SizedBox(height: 12),
-            Expanded(
-              child: _loading
-                  ? const _ListSkeleton()
-                  : _requests.isEmpty
-                  ? _buildEmpty()
-                  : RefreshIndicator(
-                      onRefresh: () => _load(refresh: true),
-                      color: AppColors.accentInk,
-                      backgroundColor: AppColors.surface,
-                      child: ListView.separated(
-                        controller: _scrollController,
-                        padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
-                        physics: const AlwaysScrollableScrollPhysics(
-                          parent: BouncingScrollPhysics(),
+      body: Stack(
+        children: [
+          const _RequestsBackdrop(),
+          SafeArea(
+            bottom: false,
+            child: Column(
+              children: [
+                // Plain gap, not SafeArea.minimum: that only applies when the
+                // value exceeds the system inset, and the status bar is already
+                // taller than any sensible padding here — so it did nothing.
+                const SizedBox(height: 14),
+                SizedBox(
+                  height: 36,
+                  child: ListView.separated(
+                    scrollDirection: Axis.horizontal,
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    itemCount: _tabs.length,
+                    separatorBuilder: (_, __) => const SizedBox(width: 8),
+                    itemBuilder: (context, i) {
+                      final (status, label, color) = _tabs[i];
+                      return _FilterChip(
+                        label: label,
+                        color: color,
+                        count: _counts[status ?? 'all'] ?? 0,
+                        selected: _filter == status,
+                        onTap: () => _onFilterChanged(status),
+                      );
+                    },
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Expanded(
+                  child: _loading
+                      ? const _ListSkeleton()
+                      : _requests.isEmpty
+                      ? _buildEmpty()
+                      : RefreshIndicator(
+                          onRefresh: () => _load(refresh: true),
+                          color: AppColors.accentInk,
+                          backgroundColor: AppColors.surface,
+                          child: ListView.separated(
+                            controller: _scrollController,
+                            padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+                            physics: const AlwaysScrollableScrollPhysics(
+                              parent: BouncingScrollPhysics(),
+                            ),
+                            itemCount: _requests.length + 1,
+                            separatorBuilder: (_, __) =>
+                                const SizedBox(height: 10),
+                            itemBuilder: (context, i) {
+                              if (i == _requests.length) {
+                                return _buildFooter();
+                              }
+                              final request = _requests[i];
+                              return _RequestCard(
+                                request: request,
+                                busy: _busyIds.contains(request.id),
+                                onApprove: () => _approve(request),
+                                onReject: () => _reject(request),
+                                onViewScreenshot: () =>
+                                    _viewScreenshot(request),
+                              );
+                            },
+                          ),
                         ),
-                        itemCount: _requests.length + 1,
-                        separatorBuilder: (_, __) => const SizedBox(height: 10),
-                        itemBuilder: (context, i) {
-                          if (i == _requests.length) {
-                            return _buildFooter();
-                          }
-                          final request = _requests[i];
-                          return _RequestCard(
-                            request: request,
-                            busy: _busyIds.contains(request.id),
-                            onApprove: () => _approve(request),
-                            onReject: () => _reject(request),
-                            onViewScreenshot: () => _viewScreenshot(request),
-                          );
-                        },
-                      ),
-                    ),
+                ),
+              ],
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
@@ -494,13 +501,10 @@ class _RequestCard extends StatelessWidget {
             padding: const EdgeInsets.fromLTRB(14, 14, 14, 10),
             child: Row(
               children: [
-                AppIconBadge(
-                  icon: kind.icon,
-                  color: kind.color,
-                  background: kind.wash,
-                  size: 18,
-                  padding: 9,
-                ),
+                // The user, not the request type. An agent scans this list
+                // for who is waiting; the type is a badge on the corner and
+                // the label beneath the name.
+                _RequestAvatar(username: request.vpnUserName, kind: kind),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Text(
@@ -902,6 +906,104 @@ class _ListSkeleton extends StatelessWidget {
             AppSkeleton(height: 40, radius: AppTheme.radiusSm),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// Illustration behind the header and the filter row.
+///
+/// Anchored to the top and faded out downward so the list scrolls over it. The
+/// composition leaves its middle empty, which is where the title and status
+/// chips sit — the artwork occupies margins the screen was not using.
+class _RequestsBackdrop extends StatelessWidget {
+  const _RequestsBackdrop();
+
+  @override
+  Widget build(BuildContext context) {
+    return IgnorePointer(
+      child: SafeArea(
+        bottom: false,
+        child: Align(
+          alignment: Alignment.topCenter,
+          child: ShaderMask(
+            shaderCallback: (rect) => const LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              stops: [0.0, 0.6, 1.0],
+              colors: [Colors.black, Colors.black26, Colors.transparent],
+            ).createShader(rect),
+            blendMode: BlendMode.dstIn,
+            child: Opacity(
+              opacity: 0.35,
+              child: Image.asset(
+                'assets/images/requests_hero.png',
+                width: double.infinity,
+                fit: BoxFit.contain,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The requesting user's portrait, with the request type marked on its corner.
+class _RequestAvatar extends StatelessWidget {
+  final String username;
+  final _RequestKind kind;
+
+  const _RequestAvatar({required this.username, required this.kind});
+
+  static const _avatars = [
+    'assets/images/avatars/a1.png',
+    'assets/images/avatars/a2.png',
+  ];
+
+  /// Hashed rather than random, so the same user keeps the same face between
+  /// this screen and the user list.
+  static String _avatarFor(String username) {
+    if (username.isEmpty) return _avatars.first;
+    var hash = 0;
+    for (final code in username.codeUnits) {
+      hash = (hash * 31 + code) & 0x7fffffff;
+    }
+    return _avatars[hash % _avatars.length];
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 42,
+      height: 42,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          ClipOval(
+            child: Image.asset(
+              _avatarFor(username),
+              width: 42,
+              height: 42,
+              fit: BoxFit.cover,
+            ),
+          ),
+          Positioned(
+            right: -2,
+            bottom: -2,
+            child: Container(
+              padding: const EdgeInsets.all(4),
+              decoration: BoxDecoration(
+                color: kind.wash,
+                shape: BoxShape.circle,
+                // Ringed in the card colour so the badge reads as sitting on
+                // the portrait rather than cut out of it.
+                border: Border.all(color: AppColors.surface, width: 1.5),
+              ),
+              child: Icon(kind.icon, size: 11, color: kind.color),
+            ),
+          ),
+        ],
       ),
     );
   }
