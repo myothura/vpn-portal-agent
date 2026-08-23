@@ -636,6 +636,10 @@ class _RequestTickerState extends State<_RequestTicker> {
       color: hasPending ? AppColors.warning : AppColors.success,
       wash: hasPending ? AppColors.warningWash : AppColors.successWash,
       trailingLabel: hasPending ? '${widget.pendingCount}' : null,
+      // Only on the all-clear. When something is pending the banner is an
+      // alert and the count is what has to be read; artwork behind it competes
+      // with that. With nothing waiting there is nothing to compete with.
+      backdropAsset: hasPending ? null : 'assets/images/requests_hero.png',
       onTap: widget.onTap,
     );
   }

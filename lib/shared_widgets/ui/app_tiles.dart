@@ -60,8 +60,11 @@ class AppStatTile extends StatelessWidget {
               ),
               const Spacer(),
               if (onTap != null)
-                const Icon(Icons.chevron_right_rounded,
-                    size: 18, color: AppColors.textTertiary),
+                const Icon(
+                  Icons.chevron_right_rounded,
+                  size: 18,
+                  color: AppColors.textTertiary,
+                ),
             ],
           ),
           const SizedBox(height: 12),
@@ -142,11 +145,16 @@ class AppActionTile extends StatelessWidget {
                     left: 24,
                     child: Container(
                       padding: const EdgeInsets.symmetric(
-                          horizontal: 5, vertical: 1),
+                        horizontal: 5,
+                        vertical: 1,
+                      ),
                       decoration: BoxDecoration(
                         color: AppColors.danger,
                         borderRadius: BorderRadius.circular(999),
-                        border: Border.all(color: AppColors.surface, width: 1.5),
+                        border: Border.all(
+                          color: AppColors.surface,
+                          width: 1.5,
+                        ),
                       ),
                       constraints: const BoxConstraints(minWidth: 18),
                       child: Text(
@@ -190,6 +198,14 @@ class AppStatusBanner extends StatelessWidget {
   final VoidCallback? onTap;
   final String? trailingLabel;
 
+  /// Optional artwork behind the banner, aligned right and faded.
+  ///
+  /// The banner is a wash of one colour across the full width, and the message
+  /// only ever fills the left of it. The illustration occupies the space the
+  /// text does not, at an opacity low enough that the text above stays the
+  /// thing being read.
+  final String? backdropAsset;
+
   const AppStatusBanner({
     super.key,
     required this.message,
@@ -198,55 +214,105 @@ class AppStatusBanner extends StatelessWidget {
     required this.wash,
     this.onTap,
     this.trailingLabel,
+    this.backdropAsset,
   });
 
   @override
   Widget build(BuildContext context) {
     final t = Theme.of(context).textTheme;
+    // With artwork, the card goes plain: a coloured wash and a glow behind an
+    // illustration that carries its own palette gives two backgrounds fighting
+    // for the same space.
+    final hasArt = backdropAsset != null;
+
     return AppCard(
       onTap: onTap,
-      tone: SurfaceTone.wash,
+      tone: hasArt ? SurfaceTone.plain : SurfaceTone.wash,
       washColor: wash,
       showShadow: false,
-      texture: CardTexture.glow,
+      texture: hasArt ? CardTexture.none : CardTexture.glow,
       textureColor: color,
-      radius: AppTheme.radiusMd,
+      // Square when it carries artwork: the illustration runs to the edge, and
+      // a rounded corner cropping it reads as the image being cut rather than
+      // as a card shape.
+      radius: hasArt ? 0 : AppTheme.radiusMd,
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      child: Row(
+      child: Stack(
         children: [
-          // Solid disc rather than a bare glyph: on a wash background a
-          // same-hue icon has almost no contrast and the banner reads as a
-          // block of colour instead of an alert.
-          Container(
-            width: 30,
-            height: 30,
-            decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-            child: Icon(icon, size: 15, color: AppColors.textOnAccent),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              message,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: t.bodyLarge?.copyWith(
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
-                color: AppColors.textPrimary,
-                height: 1.3,
+          if (backdropAsset != null)
+            Positioned.fill(
+              child: IgnorePointer(
+                child: ClipRRect(
+                  borderRadius: BorderRadius.zero,
+                  child: Align(
+                    alignment: Alignment.centerRight,
+                    child: ShaderMask(
+                      shaderCallback: (rect) => const LinearGradient(
+                        begin: Alignment.centerLeft,
+                        end: Alignment.centerRight,
+                        // Faded in from the left so it never reaches the text.
+                        stops: [0.0, 0.45, 1.0],
+                        colors: [
+                          Colors.transparent,
+                          Colors.black26,
+                          Colors.black,
+                        ],
+                      ).createShader(rect),
+                      blendMode: BlendMode.dstIn,
+                      child: Opacity(
+                        // Full strength: on the all-clear the banner carries
+                        // one short line and the artwork is the rest of it.
+                        opacity: 1.0,
+                        child: Image.asset(
+                          backdropAsset!,
+                          fit: BoxFit.cover,
+                          alignment: Alignment.centerRight,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
               ),
             ),
+          Row(
+            children: [
+              // Solid disc rather than a bare glyph: on a wash background a
+              // same-hue icon has almost no contrast and the banner reads as a
+              // block of colour instead of an alert.
+              Container(
+                width: 30,
+                height: 30,
+                decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+                child: Icon(icon, size: 15, color: AppColors.textOnAccent),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  message,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: t.bodyLarge?.copyWith(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textPrimary,
+                    height: 1.3,
+                  ),
+                ),
+              ),
+              if (trailingLabel != null) ...[
+                const SizedBox(width: 8),
+                Text(
+                  trailingLabel!,
+                  style: t.bodySmall?.copyWith(
+                    color: color,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+              if (onTap != null)
+                Icon(Icons.chevron_right_rounded, size: 18, color: color),
+            ],
           ),
-          if (trailingLabel != null) ...[
-            const SizedBox(width: 8),
-            Text(
-              trailingLabel!,
-              style: t.bodySmall?.copyWith(
-                  color: color, fontWeight: FontWeight.w700),
-            ),
-          ],
-          if (onTap != null)
-            Icon(Icons.chevron_right_rounded, size: 18, color: color),
         ],
       ),
     );
