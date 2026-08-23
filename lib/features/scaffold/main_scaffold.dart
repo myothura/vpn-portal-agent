@@ -28,7 +28,24 @@ import 'package:vpn_agent_app/features/users/screens/user_management_screen.dart
 class MainShell extends InheritedWidget {
   final void Function(String tabLabel, {String? userFilter}) goToTab;
 
-  const MainShell({super.key, required this.goToTab, required super.child});
+  /// The label of the tab currently on screen.
+  ///
+  /// The tabs are kept alive, so switching to one does not re-run its
+  /// initState and nothing refetches. A request that arrived while the agent
+  /// was on Dashboard was therefore missing from the pending list until a
+  /// filter chip was tapped — the chip reloads, the tab switch did not.
+  ///
+  /// Screens listen and reload when their own label appears. A ValueNotifier
+  /// rather than a rebuild: the shell should not rebuild four screens to tell
+  /// one of them it is visible.
+  final ValueNotifier<String> visibleTab;
+
+  const MainShell({
+    super.key,
+    required this.goToTab,
+    required this.visibleTab,
+    required super.child,
+  });
 
   static MainShell? of(BuildContext context) =>
       context.dependOnInheritedWidgetOfExactType<MainShell>();
@@ -72,6 +89,9 @@ class _MainScaffoldState extends State<MainScaffold> {
   /// push events into it without a BuildContext.
   late final DashboardBloc _dashboardBloc;
 
+  /// Broadcasts which tab is on screen. See MainShell.visibleTab.
+  final ValueNotifier<String> _visibleTab = ValueNotifier('Dashboard');
+
   @override
   void initState() {
     super.initState();
@@ -88,6 +108,7 @@ class _MainScaffoldState extends State<MainScaffold> {
 
   @override
   void dispose() {
+    _visibleTab.dispose();
     AgentRealtimeService.instance.removeListener(_onChatMessage);
     _dashboardBloc.close();
     super.dispose();
@@ -168,6 +189,8 @@ class _MainScaffoldState extends State<MainScaffold> {
       _selectedIndex = index;
     });
 
+    _visibleTab.value = label;
+
     final nav = _keyFor(label).currentState;
     if (nav == null) return;
 
@@ -205,6 +228,7 @@ class _MainScaffoldState extends State<MainScaffold> {
       return;
     }
     setState(() => _selectedIndex = index);
+    _visibleTab.value = _items[index].label;
   }
 
   @override
@@ -222,6 +246,7 @@ class _MainScaffoldState extends State<MainScaffold> {
       value: _dashboardBloc,
       child: MainShell(
         goToTab: _goToTab,
+        visibleTab: _visibleTab,
         child: PopScope(
           // Back belongs to the visible tab first. Without this the system back
           // gesture closed the app from a detail screen instead of returning to
@@ -236,6 +261,7 @@ class _MainScaffoldState extends State<MainScaffold> {
             }
             if (safeIndex != 0) {
               setState(() => _selectedIndex = 0);
+              _visibleTab.value = items[0].label;
               return;
             }
             Navigator.of(context, rootNavigator: true).maybePop();

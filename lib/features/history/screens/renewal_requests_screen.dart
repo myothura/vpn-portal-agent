@@ -9,6 +9,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 
 import 'package:vpn_agent_app/core/services/agent_realtime_service.dart';
 import 'package:vpn_agent_app/core/theme/app_colors.dart';
+import 'package:vpn_agent_app/features/scaffold/main_scaffold.dart';
 import 'package:vpn_agent_app/core/theme/app_theme.dart';
 import 'package:vpn_agent_app/shared_widgets/ui/app_surface.dart';
 
@@ -123,11 +124,31 @@ class _RenewalRequestsScreenState extends State<RenewalRequestsScreen> {
     AgentRealtimeService.instance.start();
     AgentRealtimeService.instance.addRenewalListener(_onNewRequest);
 
+    // The tabs are kept alive, so switching back here does not re-run this
+    // method and nothing refetched. A request that arrived while the agent was
+    // on another tab was missing from the pending list until a filter chip was
+    // tapped — the chip reloads, the tab switch did not.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _visibleTab = MainShell.of(context)?.visibleTab;
+      _visibleTab?.addListener(_onTabChanged);
+    });
+
     _load(refresh: true);
+  }
+
+  /// The shell's visible-tab notifier, held so it can be detached in dispose.
+  ValueNotifier<String>? _visibleTab;
+
+  void _onTabChanged() {
+    if (!mounted || _visibleTab?.value != 'Requests') return;
+    _load(refresh: true);
+    _refreshBadge();
   }
 
   @override
   void dispose() {
+    _visibleTab?.removeListener(_onTabChanged);
     AgentRealtimeService.instance.removeRenewalListener(_onNewRequest);
     _scrollController.dispose();
     super.dispose();
