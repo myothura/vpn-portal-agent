@@ -758,12 +758,11 @@ class _UrgentStrip extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 6, 16, 14),
       child: AppCard(
-        tone: SurfaceTone.wash,
-        washColor: AppColors.warningWash,
-        // Warm tint and a texture so the band reads as an alert against the
-        // white rows below rather than another section of the list.
-        texture: CardTexture.glow,
-        textureColor: AppColors.warning,
+        // Plain white, no texture. The band carries an illustration with its
+        // own palette; a wash behind it gives two backgrounds competing for
+        // the same space.
+        tone: SurfaceTone.plain,
+        texture: CardTexture.none,
         showShadow: false,
         radius: AppTheme.radiusLg,
         // No horizontal padding: the avatar row runs to the card's own edges,
@@ -771,115 +770,168 @@ class _UrgentStrip extends StatelessWidget {
         // vanishing at an inset line inside it. The header and the list each
         // re-add their own inset.
         padding: const EdgeInsets.fromLTRB(0, 12, 0, 14),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+        child: Stack(
           children: [
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 14),
-              child: Row(
-                children: [
-                  const Icon(
-                    Iconsax.timer_1,
-                    size: 15,
-                    color: AppColors.warning,
-                  ),
-                  const SizedBox(width: 7),
-                  Text(
-                    'Expiring this week',
-                    style: t.bodyMedium?.copyWith(
-                      color: AppColors.textPrimary,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  const Spacer(),
-                  // Tapping through switches to the expiring filter, since the
-                  // strip deliberately shows only the ten soonest.
-                  InkWell(
-                    onTap: onSeeAll,
-                    borderRadius: BorderRadius.circular(999),
-                    child: Row(
-                      children: [
-                        AppPill(
-                          label: '$total',
-                          color: AppColors.warning,
-                          background: AppColors.surface,
-                        ),
-                        const Icon(
-                          Icons.chevron_right_rounded,
-                          size: 18,
-                          color: AppColors.warning,
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 12),
-            // Height is set from the parts: 48 ring + 4 gap + two 12pt lines.
-            // The previous 78 clipped the portrait once it replaced a letter.
-            SizedBox(
-              height: 84,
-              child: ListView.separated(
-                scrollDirection: Axis.horizontal,
-                // Clipped: Clip.none let avatars scroll on past the card's
-                // rounded edge and sit loose on the page behind it.
-                clipBehavior: Clip.hardEdge,
-                // The card no longer pads its sides, so the inset lives here:
-                // the row scrolls to the card's own edge and is clipped there.
-                padding: const EdgeInsets.symmetric(horizontal: 14),
-                itemCount: users.length,
-                separatorBuilder: (_, __) => const SizedBox(width: 12),
-                itemBuilder: (context, i) {
-                  final user = users[i];
-                  final expiry = _Expiry.of(user.expiryDate, user.status);
-                  return SizedBox(
-                    width: 60,
-                    child: InkWell(
-                      onTap: () => onTap(user),
-                      borderRadius: BorderRadius.circular(AppTheme.radiusSm),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Container(
-                            padding: const EdgeInsets.all(2),
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              color: AppColors.surface,
-                              border: Border.all(color: expiry.color, width: 2),
-                            ),
-                            child: _Avatar(
-                              username: user.username,
-                              isBusiness: user.hasBusinessPlan,
-                              isOnline: user.isOnline,
-                            ),
-                          ),
-                          const SizedBox(height: 5),
-                          Text(
-                            expiry.label,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: t.bodySmall?.copyWith(
-                              color: expiry.color,
-                              fontSize: 10,
-                              fontWeight: FontWeight.w800,
-                            ),
-                          ),
-                          Text(
-                            user.username,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            textAlign: TextAlign.center,
-                            style: t.bodySmall?.copyWith(fontSize: 10),
-                          ),
-                        ],
+            const _ExpiringBackdrop(),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 14),
+                  child: Row(
+                    children: [
+                      const Icon(
+                        Iconsax.timer_1,
+                        size: 15,
+                        color: AppColors.accentInk,
                       ),
-                    ),
-                  );
-                },
-              ),
+                      const SizedBox(width: 7),
+                      Text(
+                        'Expiring this week',
+                        style: t.bodyMedium?.copyWith(
+                          color: AppColors.textPrimary,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const Spacer(),
+                      // Tapping through switches to the expiring filter, since the
+                      // strip deliberately shows only the ten soonest.
+                      InkWell(
+                        onTap: onSeeAll,
+                        borderRadius: BorderRadius.circular(999),
+                        child: Row(
+                          children: [
+                            AppPill(
+                              label: '$total',
+                              color: AppColors.textOnAccent,
+                              background: AppColors.accentInk,
+                            ),
+                            const Icon(
+                              Icons.chevron_right_rounded,
+                              size: 18,
+                              color: AppColors.accentInk,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 12),
+                // Height is set from the parts: 48 ring + 4 gap + two 12pt lines.
+                // The previous 78 clipped the portrait once it replaced a letter.
+                SizedBox(
+                  height: 84,
+                  child: ListView.separated(
+                    scrollDirection: Axis.horizontal,
+                    // Clipped: Clip.none let avatars scroll on past the card's
+                    // rounded edge and sit loose on the page behind it.
+                    clipBehavior: Clip.hardEdge,
+                    // The card no longer pads its sides, so the inset lives here:
+                    // the row scrolls to the card's own edge and is clipped there.
+                    padding: const EdgeInsets.symmetric(horizontal: 14),
+                    itemCount: users.length,
+                    separatorBuilder: (_, __) => const SizedBox(width: 12),
+                    itemBuilder: (context, i) {
+                      final user = users[i];
+                      final expiry = _Expiry.of(user.expiryDate, user.status);
+                      return SizedBox(
+                        width: 60,
+                        child: InkWell(
+                          onTap: () => onTap(user),
+                          borderRadius: BorderRadius.circular(
+                            AppTheme.radiusSm,
+                          ),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.all(2),
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: AppColors.surface,
+                                  border: Border.all(
+                                    color: expiry.color,
+                                    width: 2,
+                                  ),
+                                ),
+                                child: _Avatar(
+                                  username: user.username,
+                                  isBusiness: user.hasBusinessPlan,
+                                  isOnline: user.isOnline,
+                                ),
+                              ),
+                              const SizedBox(height: 5),
+                              Text(
+                                expiry.label,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: t.bodySmall?.copyWith(
+                                  color: expiry.color,
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                              Text(
+                                user.username,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                textAlign: TextAlign.center,
+                                style: t.bodySmall?.copyWith(fontSize: 10),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ],
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Artwork on the right of the expiring band.
+///
+/// Aligned right and faded in from the left: the label, the count and the
+/// avatar row all live on the left, and the illustration fills the space they
+/// leave rather than sitting behind them.
+class _ExpiringBackdrop extends StatelessWidget {
+  const _ExpiringBackdrop();
+
+  @override
+  Widget build(BuildContext context) {
+    return Positioned.fill(
+      child: IgnorePointer(
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(AppTheme.radiusLg),
+          child: Align(
+            alignment: Alignment.centerRight,
+            child: ShaderMask(
+              shaderCallback: (rect) => const LinearGradient(
+                begin: Alignment.centerLeft,
+                end: Alignment.centerRight,
+                stops: [0.0, 0.5, 1.0],
+                colors: [Colors.transparent, Colors.black26, Colors.black],
+              ).createShader(rect),
+              blendMode: BlendMode.dstIn,
+              child: Opacity(
+                // Faint. At anything stronger the hourglass and calendar read as
+                // content to look at, competing with the avatar row that is
+                // the actual point of the band. It is texture, not an image.
+                opacity: 0.15,
+                child: Image.asset(
+                  'assets/images/expiring_hero.png',
+                  fit: BoxFit.cover,
+                  alignment: Alignment.centerRight,
+                ),
+              ),
+            ),
+          ),
         ),
       ),
     );
