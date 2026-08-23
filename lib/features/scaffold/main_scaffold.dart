@@ -2,6 +2,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:iconsax/iconsax.dart';
+import 'package:vpn_agent_app/core/services/agent_realtime_service.dart';
 import 'package:vpn_agent_app/core/theme/app_colors.dart';
 import 'package:vpn_agent_app/features/chat/screens/agent_chat_list_screen.dart';
 import 'package:vpn_agent_app/features/dashboard/bloc/dashboard_bloc.dart';
@@ -67,10 +68,41 @@ class _MainScaffoldState extends State<MainScaffold> {
   GlobalKey<NavigatorState> _keyFor(String label) =>
       _navKeys.putIfAbsent(label, () => GlobalKey<NavigatorState>());
 
+  /// Owned here rather than created in build, so the chat listener below can
+  /// push events into it without a BuildContext.
+  late final DashboardBloc _dashboardBloc;
+
   @override
   void initState() {
     super.initState();
+    _dashboardBloc = DashboardBloc(repository: DashboardRepository())
+      ..add(DashboardStarted());
     _loadPermissions();
+
+    // The chat badge came only from the dashboard's 30-second poll, so a
+    // message could sit for half a minute before the bar showed it — on the
+    // one screen an agent watches while waiting for exactly that. The socket
+    // already carries every message; this just tells the bloc to recount.
+    AgentRealtimeService.instance.addListener(_onChatMessage);
+  }
+
+  @override
+  void dispose() {
+    AgentRealtimeService.instance.removeListener(_onChatMessage);
+    _dashboardBloc.close();
+    super.dispose();
+  }
+
+  void _onChatMessage(Map<String, dynamic> event) {
+    if (!mounted) return;
+
+    // Only the user's own messages count as unread. A reply sent from this
+    // account, or from the AI, comes back over the same channel and would
+    // otherwise raise a badge for something already read.
+    final sender = event['sender_type']?.toString();
+    if (sender != null && sender != 'user') return;
+
+    _dashboardBloc.add(DashboardRefreshed());
   }
 
   Future<void> _loadPermissions() async {
@@ -183,10 +215,11 @@ class _MainScaffoldState extends State<MainScaffold> {
     // index past the end of the list.
     final safeIndex = _selectedIndex.clamp(0, items.length - 1);
 
-    return BlocProvider(
-      create: (_) =>
-          DashboardBloc(repository: DashboardRepository())
-            ..add(DashboardStarted()),
+    return BlocProvider.value(
+      // .value, not create: the bloc is a field on this State so the socket
+      // listener can reach it. create: builds it below this widget, where
+      // context.read from initState cannot see it.
+      value: _dashboardBloc,
       child: MainShell(
         goToTab: _goToTab,
         child: PopScope(
