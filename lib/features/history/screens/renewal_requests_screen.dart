@@ -6,6 +6,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 
 import 'package:vpn_agent_app/core/services/agent_realtime_service.dart';
 import 'package:vpn_agent_app/core/theme/app_colors.dart';
+import 'package:vpn_agent_app/core/utils/app_log.dart';
 import 'package:vpn_agent_app/core/utils/formatters.dart';
 import 'package:vpn_agent_app/core/widgets/confirm_dialog.dart';
 import 'package:vpn_agent_app/features/scaffold/main_scaffold.dart';
@@ -105,9 +106,41 @@ class _RenewalRequestsScreenState extends State<RenewalRequestsScreen> {
   /// to load are different facts and the agent can only act on one of them.
   bool _failed = false;
 
-  /// Ids currently being approved or rejected, so a row can show its own
-  /// progress instead of an overlay blocking the whole list.
-  final Set<int> _busyIds = {};
+  /// FAST_APPROVE_STATE_V1 — the decisions this agent has already made, held
+  /// beside the list rather than inside it.
+  ///
+  /// RenewalRequest has final fields and no copyWith, and the model file is
+  /// not part of this change, so a row cannot be rewritten in place. The id
+  /// and the decision live here instead, and every reader of a row's status
+  /// goes through _statusOf.
+  ///
+  /// This map is also what keeps a reload from undoing the tap. The realtime
+  /// listener, the tab return and pull-to-refresh all replace _requests with
+  /// whatever the server says, and for a second or two after the tap the
+  /// server still says 'pending'. The local decision outranks it.
+  ///
+  /// An entry is removed in one place only — a POST that did not succeed —
+  /// because that is the one case where 'pending' is true and the row has to
+  /// come back.
+  final Map<int, String> _localDecisions = {};
+
+  /// The status a row should be drawn with: the local decision if there is
+  /// one, otherwise what the server sent.
+  String _statusOf(RenewalRequest request) =>
+      _localDecisions[request.id] ?? request.status;
+
+  /// The rows the current tab should show.
+  ///
+  /// A request just approved no longer belongs on the pending tab and leaves
+  /// it without waiting for a refetch. Before the first decision — which is
+  /// every build until the agent taps — this is the list itself, so there is
+  /// no copy per build.
+  List<RenewalRequest> get _visibleRequests {
+    if (_localDecisions.isEmpty || _filter == null) return _requests;
+    return _requests
+        .where((request) => _statusOf(request) == _filter)
+        .toList(growable: false);
+  }
 
   // Each tab wears the colour of the status it selects, so the chip row and
   // the badges on the cards below it agree.
@@ -179,6 +212,12 @@ class _RenewalRequestsScreenState extends State<RenewalRequestsScreen> {
     _refreshBadge();
     // Refetched rather than inserted: the counts and the estimated cost are
     // computed server-side, and a locally-built row would be missing both.
+    //
+    // REALTIME_KEEPS_LOCAL_DECISION_V1 — this replaces _requests wholesale,
+    // including rows the agent has just decided and whose POST may still be
+    // in flight, which the server is still reporting as pending. It cannot
+    // resurrect them: _localDecisions is untouched by a reload and _statusOf
+    // is read after it.
     _load(refresh: true);
   }
 
@@ -256,6 +295,13 @@ class _RenewalRequestsScreenState extends State<RenewalRequestsScreen> {
   /// carried into the confirmation, which said only that credit would be
   /// deducted. That is the one thing the agent already knew.
   Future<void> _approve(RenewalRequest request) async {
+    // FAST_APPROVE_REENTRY_V1 — this is what _busyIds used to cover. A second
+    // tap cannot reach here through the UI (the row loses its buttons in the
+    // same frame as the first), but the retry action on the failure snackbar
+    // calls straight back in, and so would a double tap landing either side
+    // of the confirmation.
+    if (_localDecisions.containsKey(request.id)) return;
+
     final confirmed = await confirmAction(
       context,
       title: 'တောင်းဆိုမှုကို အတည်ပြုမလား',
@@ -272,19 +318,34 @@ class _RenewalRequestsScreenState extends State<RenewalRequestsScreen> {
     );
     if (!confirmed || !mounted) return;
 
-    setState(() => _busyIds.add(request.id));
-    final ok = await _service.approveRequest(request.id);
-    if (!mounted) return;
-    setState(() => _busyIds.remove(request.id));
+    // FAST_APPROVE_OPTIMISTIC_V1 — the row changes here, before the POST.
+    //
+    // It used to be: add to _busyIds, await approveRequest, then
+    // _load(refresh: true) and wait for a page of twenty rows to come back
+    // before the approved one left the tab. Two round trips with the agent
+    // watching a spinner inside the button they had just pressed. The
+    // decision is recorded and drawn now; the call runs behind it.
+    setState(() => _localDecisions[request.id] = 'approved');
+    _toast('${request.vpnUserName} ၏ တောင်းဆိုမှုကို အတည်ပြုလိုက်ပါပြီ။');
 
-    _toast(ok ? 'Request approved.' : 'Could not approve. Check your balance.');
-    if (ok) {
-      _load(refresh: true);
-      _refreshBadge();
-    }
+    await _settleDecision(
+      request,
+      'approved',
+      () => _service.approveRequest(request.id),
+      '${request.vpnUserName} ၏ တောင်းဆိုမှုကို အတည်မပြုနိုင်ပါ။ '
+          'တောင်းဆိုမှုကို စာရင်းထဲသို့ ပြန်ထည့်လိုက်ပါပြီ။ '
+          'Credit လက်ကျန်နှင့် အင်တာနက် ချိတ်ဆက်မှုကို စစ်ဆေးပြီး '
+          'ထပ်မံ ကြိုးစားပါ။',
+      () => _approve(request),
+    );
   }
 
   Future<void> _reject(RenewalRequest request) async {
+    // FAST_REJECT_REENTRY_V1 — see _approve. The failure snackbar's retry
+    // calls back in here, and a rejection already recorded must not open a
+    // second reason dialog.
+    if (_localDecisions.containsKey(request.id)) return;
+
     final controller = TextEditingController();
     final reason = await showDialog<String>(
       context: context,
@@ -296,7 +357,12 @@ class _RenewalRequestsScreenState extends State<RenewalRequestsScreen> {
           size: 22,
           padding: 12,
         ),
-        title: const Text('Reject this request?'),
+        // REJECT_DIALOG_MY_V1 — Burmese, like every other dialog on this
+        // path, and both buttons raised to the 44dp minimum. The Material
+        // default is 40 high, which is under it, on a dialog whose confirm
+        // button is destructive. Only minimumSize changes: same padding,
+        // same type, same colours.
+        title: const Text('တောင်းဆိုမှုကို ငြင်းပယ်မလား'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -311,23 +377,27 @@ class _RenewalRequestsScreenState extends State<RenewalRequestsScreen> {
               autofocus: true,
               maxLines: 2,
               decoration: const InputDecoration(
-                hintText: 'Reason (shown to the user)',
+                hintText: 'အကြောင်းပြချက် (အသုံးပြုသူ မြင်ရပါမည်)',
               ),
             ),
           ],
         ),
         actions: [
           TextButton(
+            style: TextButton.styleFrom(minimumSize: const Size(64, 44)),
             onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancel'),
+            child: const Text('မလုပ်တော့ပါ'),
           ),
           FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: AppColors.danger),
+            style: FilledButton.styleFrom(
+              backgroundColor: AppColors.danger,
+              minimumSize: const Size(64, 44),
+            ),
             // A reason is required: the user sees this, and "rejected" with no
             // explanation just becomes a support message the agent answers by
             // hand anyway.
             onPressed: () => Navigator.pop(ctx, controller.text.trim()),
-            child: const Text('Reject'),
+            child: const Text('ငြင်းပယ်မည်'),
           ),
         ],
       ),
@@ -338,20 +408,27 @@ class _RenewalRequestsScreenState extends State<RenewalRequestsScreen> {
     controller.dispose();
 
     if (reason == null || reason.isEmpty || !mounted) {
-      if (reason != null && reason.isEmpty) _toast('Add a reason to reject.');
+      if (reason != null && reason.isEmpty) {
+        _toast('ငြင်းပယ်ရန် အကြောင်းပြချက် ထည့်ပါ။');
+      }
       return;
     }
 
-    setState(() => _busyIds.add(request.id));
-    final ok = await _service.rejectRequest(request.id, reason);
-    if (!mounted) return;
-    setState(() => _busyIds.remove(request.id));
+    // FAST_REJECT_OPTIMISTIC_V1 — the same shape as approve. A rejection is
+    // not a purchase, but it took the identical two round trips to leave the
+    // pending tab, and the agent clearing a batch of them felt every one.
+    setState(() => _localDecisions[request.id] = 'rejected');
+    _toast('${request.vpnUserName} ၏ တောင်းဆိုမှုကို ငြင်းပယ်လိုက်ပါပြီ။');
 
-    _toast(ok ? 'Request rejected.' : 'Could not reject the request.');
-    if (ok) {
-      _load(refresh: true);
-      _refreshBadge();
-    }
+    await _settleDecision(
+      request,
+      'rejected',
+      () => _service.rejectRequest(request.id, reason),
+      '${request.vpnUserName} ၏ တောင်းဆိုမှုကို ငြင်းပယ်၍ မရပါ။ '
+          'တောင်းဆိုမှုကို စာရင်းထဲသို့ ပြန်ထည့်လိုက်ပါပြီ။ '
+          'အင်တာနက် ချိတ်ဆက်မှုကို စစ်ဆေးပြီး ထပ်မံ ကြိုးစားပါ။',
+      () => _reject(request),
+    );
   }
 
   // LOCAL_CONFIRM_REMOVED_V1 — the screen's own _confirm lived here. Its one
@@ -362,6 +439,74 @@ class _RenewalRequestsScreenState extends State<RenewalRequestsScreen> {
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  /// DECISION_FAILED_LOUD_V1 — a decision that never reached the server.
+  ///
+  /// The caller has already put the row back. A row that reappears with
+  /// nothing said would be worse than the wait this replaced: the agent
+  /// watched the request leave the list and would find it there again with no
+  /// idea why. So this one is red rather than the default surface, holds for
+  /// eight seconds rather than four, names the user in the message, and
+  /// carries the retry.
+  void _decisionFailed(String message, VoidCallback onRetry) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          backgroundColor: AppColors.danger,
+          duration: const Duration(seconds: 8),
+          content: Text(
+            message,
+            style: const TextStyle(color: AppColors.textOnAccent),
+          ),
+          action: SnackBarAction(
+            label: 'ထပ်မံကြိုးစားမည်',
+            textColor: AppColors.textOnAccent,
+            onPressed: onRetry,
+          ),
+        ),
+      );
+  }
+
+  /// Runs the POST behind a decision that is already drawn.
+  ///
+  /// Nothing in the UI waits on this — the tap returned as soon as the row
+  /// changed — so it has to swallow everything. The service already maps a
+  /// DioException to false, but an error escaping here would land in the zone
+  /// handler with no one to report it. Every path ends either in a badge
+  /// refresh or in a visible error; none of them ends in silence.
+  Future<void> _settleDecision(
+    RenewalRequest request,
+    String decision,
+    Future<bool> Function() send,
+    String failureMessage,
+    VoidCallback onRetry,
+  ) async {
+    var ok = false;
+    try {
+      ok = await send();
+    } catch (error) {
+      AppLog.e('renewalDecision/$decision', error);
+      ok = false;
+    }
+    if (!mounted) return;
+
+    if (ok) {
+      // No refetch. The row is already where it belongs; the only stale thing
+      // left on screen is the count in the nav badge, and that is one cheap
+      // call rather than a page of twenty rows the agent has already read.
+      _refreshBadge();
+      return;
+    }
+
+    AppLog.e(
+      'renewalDecision/$decision',
+      'request ${request.id} was not applied',
+    );
+    setState(() => _localDecisions.remove(request.id));
+    _decisionFailed(failureMessage, onRetry);
   }
 
   void _viewScreenshot(RenewalRequest request) {
@@ -391,6 +536,12 @@ class _RenewalRequestsScreenState extends State<RenewalRequestsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // FAST_APPROVE_VISIBLE_V1 — resolved once per build, not per row. Every
+    // use below is this list: the empty check, the item count, the index and
+    // the footer's total all have to agree, and _requests alone no longer
+    // answers any of them once a decision has been made locally.
+    final visible = _visibleRequests;
+
     return Scaffold(
       backgroundColor: AppColors.background,
       body: Stack(
@@ -425,9 +576,13 @@ class _RenewalRequestsScreenState extends State<RenewalRequestsScreen> {
                 ),
                 const SizedBox(height: 12),
                 Expanded(
+                  // FAST_APPROVE_LIST_V1 — driven by the visible list, so a
+                  // row decided a moment ago is gone from the pending tab now
+                  // rather than after the refetch that used to follow the
+                  // POST. Pull-to-refresh is unchanged and still refetches.
                   child: _loading
                       ? const _ListSkeleton()
-                      : _requests.isEmpty
+                      : visible.isEmpty
                       ? (_failed ? _buildFailed() : _buildEmpty())
                       : RefreshIndicator(
                           onRefresh: () => _load(refresh: true),
@@ -439,17 +594,17 @@ class _RenewalRequestsScreenState extends State<RenewalRequestsScreen> {
                             physics: const AlwaysScrollableScrollPhysics(
                               parent: BouncingScrollPhysics(),
                             ),
-                            itemCount: _requests.length + 1,
+                            itemCount: visible.length + 1,
                             separatorBuilder: (_, __) =>
                                 const SizedBox(height: 10),
                             itemBuilder: (context, i) {
-                              if (i == _requests.length) {
-                                return _buildFooter();
+                              if (i == visible.length) {
+                                return _buildFooter(visible.length);
                               }
-                              final request = _requests[i];
+                              final request = visible[i];
                               return _RequestCard(
                                 request: request,
-                                busy: _busyIds.contains(request.id),
+                                status: _statusOf(request),
                                 onApprove: () => _approve(request),
                                 onReject: () => _reject(request),
                                 onViewScreenshot: () =>
@@ -467,7 +622,10 @@ class _RenewalRequestsScreenState extends State<RenewalRequestsScreen> {
     );
   }
 
-  Widget _buildFooter() {
+  /// FOOTER_COUNT_VISIBLE_V1 — counts what is on screen, not what was
+  /// fetched. After a few approvals those differ: the decided rows are still
+  /// in _requests until the next reload, and the footer used to count them.
+  Widget _buildFooter(int shown) {
     if (_loadingMore) {
       return const Padding(
         padding: EdgeInsets.symmetric(vertical: 20),
@@ -479,7 +637,7 @@ class _RenewalRequestsScreenState extends State<RenewalRequestsScreen> {
       padding: const EdgeInsets.only(top: 16),
       child: Center(
         child: Text(
-          '${_requests.length} shown',
+          '$shown shown',
           style: Theme.of(context).textTheme.bodySmall,
         ),
       ),
@@ -524,14 +682,25 @@ class _RenewalRequestsScreenState extends State<RenewalRequestsScreen> {
 
 class _RequestCard extends StatelessWidget {
   final RenewalRequest request;
-  final bool busy;
+
+  /// CARD_EFFECTIVE_STATUS_V1 — passed in rather than read off the model.
+  ///
+  /// A request the agent has decided on this device is approved or rejected
+  /// before the server has been told, and RenewalRequest.status still says
+  /// pending. The screen resolves that; the card only draws what it is given.
+  ///
+  /// This replaces the `busy` flag, which disabled the buttons and put a
+  /// spinner on the approve one while the POST was in flight. There is no
+  /// such window any more — a decided card has no button row at all.
+  final String status;
+
   final VoidCallback onApprove;
   final VoidCallback onReject;
   final VoidCallback onViewScreenshot;
 
   const _RequestCard({
     required this.request,
-    required this.busy,
+    required this.status,
     required this.onApprove,
     required this.onReject,
     required this.onViewScreenshot,
@@ -541,8 +710,11 @@ class _RequestCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final t = Theme.of(context).textTheme;
     final kind = _RequestKind.of(request.type);
-    final status = _StatusStyle.of(request.status);
-    final pending = request.status == 'pending';
+    // CARD_STATUS_STYLE_V1 — both read the effective status now. The badge and
+    // the button row have to agree: a card showing APPROVED with an Approve
+    // button under it would be the worst of both.
+    final statusStyle = _StatusStyle.of(status);
+    final pending = status == 'pending';
 
     return AppCard(
       padding: EdgeInsets.zero,
@@ -569,9 +741,10 @@ class _RequestCard extends StatelessWidget {
                 ),
                 const SizedBox(width: 8),
                 AppPill(
-                  label: status.label.toUpperCase(),
-                  color: status.color,
-                  background: status.wash,
+                  // CARD_STATUS_PILL_V1 — the resolved style, not the model's.
+                  label: statusStyle.label.toUpperCase(),
+                  color: statusStyle.color,
+                  background: statusStyle.wash,
                 ),
               ],
             ),
@@ -622,13 +795,18 @@ class _RequestCard extends StatelessWidget {
               padding: const EdgeInsets.fromLTRB(14, 4, 14, 14),
               child: Row(
                 children: [
+                  // CARD_NO_BUSY_V1 — no disabled state and no spinner.
+                  // The decision is recorded in the same frame as the tap, so
+                  // this row is already gone by the time the POST starts; a
+                  // "Working" label had nowhere left to appear. Heights,
+                  // padding and type are exactly as before.
                   Expanded(
                     child: SizedBox(
                       // TAP_TARGET_44_V1 — 42 was under the platform minimum,
                       // on a button that sits beside a destructive one.
                       height: 44,
                       child: OutlinedButton(
-                        onPressed: busy ? null : onReject,
+                        onPressed: onReject,
                         style: OutlinedButton.styleFrom(
                           foregroundColor: AppColors.danger,
                           side: const BorderSide(color: AppColors.danger),
@@ -654,7 +832,7 @@ class _RequestCard extends StatelessWidget {
                       // above them.
                       height: 44,
                       child: FilledButton.icon(
-                        onPressed: busy ? null : onApprove,
+                        onPressed: onApprove,
                         style: FilledButton.styleFrom(
                           padding: EdgeInsets.zero,
                           minimumSize: Size.zero,
@@ -663,17 +841,8 @@ class _RequestCard extends StatelessWidget {
                             fontWeight: FontWeight.w700,
                           ),
                         ),
-                        icon: busy
-                            ? const SizedBox(
-                                width: 16,
-                                height: 16,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: AppColors.textOnAccent,
-                                ),
-                              )
-                            : const Icon(Icons.check_rounded, size: 18),
-                        label: Text(busy ? 'Working' : 'Approve'),
+                        icon: const Icon(Icons.check_rounded, size: 18),
+                        label: const Text('Approve'),
                       ),
                     ),
                   ),

@@ -4,8 +4,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:iconsax/iconsax.dart';
 
+// SEND_NOTI_IMPORTS_V2 — confirmAction replaces the hand-rolled broadcast
+// AlertDialog; AppLog carries the background send's failures.
 import 'package:vpn_agent_app/core/theme/app_colors.dart';
 import 'package:vpn_agent_app/core/theme/app_theme.dart';
+import 'package:vpn_agent_app/core/utils/app_log.dart';
+import 'package:vpn_agent_app/core/widgets/confirm_dialog.dart';
 import 'package:vpn_agent_app/shared_widgets/ui/app_surface.dart';
 
 import 'package:vpn_agent_app/features/notifications/services/notification_list_service.dart';
@@ -28,79 +32,117 @@ class _SendNotificationScreenState extends State<SendNotificationScreen> {
   final _service = NotificationListService();
   final _userService = UserManagementService();
 
+  // SEND_NOTI_FIELDS_V2 — _sending is gone. The screen no longer waits for the
+  // POST to come back, so there is no busy state left to draw.
   bool _broadcast = false;
-  bool _sending = false;
 
   VpnUser? _recipient;
-  List<VpnUser> _results = [];
+  List<VpnUser> _results = const [];
   bool _searching = false;
+
+  /// getVpnUsers returns null when the request failed and an empty list when
+  /// the query genuinely matched nothing. Folding both into an empty list told
+  /// the agent a username did not exist when the request never landed.
+  bool _searchFailed = false;
+
+  /// The query [_results] belongs to. Empty means nothing has been searched
+  /// yet, which has to read differently from "searched, found nobody".
+  String _lastQuery = '';
+
   Timer? _debounce;
 
-  @override
-  void initState() {
-    super.initState();
-    // Rebuilds the preview and the send button's enabled state as the message
-    // is typed.
-    _titleController.addListener(_onChanged);
-    _bodyController.addListener(_onChanged);
-  }
+  /// Only the preview and the send bar read the message text. Merging the two
+  /// controllers into one Listenable lets those two subtrees rebuild on a
+  /// keystroke instead of the whole form.
+  late final Listenable _message = Listenable.merge([
+    _titleController,
+    _bodyController,
+  ]);
+
+  /// Title's next action lands here, so the chain is explicit rather than
+  /// whatever the traversal order happens to be.
+  final _bodyFocus = FocusNode();
+
+  // SEND_NOTI_LIFECYCLE_V2 — initState and _onChanged are gone with the two
+  // setState listeners. Every character typed into the title or the body used
+  // to rebuild this entire State: the audience toggle, the recipient search
+  // TextField, its result list and the preview. The preview and the send bar
+  // now listen to the controllers themselves.
 
   @override
   void dispose() {
     _debounce?.cancel();
-    _titleController.removeListener(_onChanged);
-    _bodyController.removeListener(_onChanged);
     _titleController.dispose();
     _bodyController.dispose();
     _searchController.dispose();
+    _bodyFocus.dispose();
     super.dispose();
-  }
-
-  void _onChanged() {
-    if (mounted) setState(() {});
   }
 
   // ── Recipient ───────────────────────────────────────────────────────────
 
+  // SEND_NOTI_SEARCH_V2 — three outcomes, not one.
   void _onSearchChanged(String query) {
     _debounce?.cancel();
+    final trimmed = query.trim();
 
-    if (query.trim().isEmpty) {
+    if (trimmed.isEmpty) {
       setState(() {
-        _results = [];
+        _results = const [];
         _searching = false;
+        _searchFailed = false;
+        _lastQuery = '';
       });
       return;
     }
 
-    setState(() => _searching = true);
+    setState(() {
+      _searching = true;
+      _searchFailed = false;
+    });
     _debounce = Timer(const Duration(milliseconds: 400), () async {
       final response = await _userService.getVpnUsers(
         page: 1,
-        search: query.trim(),
+        search: trimmed,
       );
+      // The debounce can outlive the screen; this is the only guard between
+      // the request and a setState on a disposed State.
       if (!mounted) return;
       setState(() {
-        _results = response?.users ?? [];
+        // null is the service's failure signal. An empty users list is a real
+        // answer: nobody matched.
+        _searchFailed = response == null;
+        _results = response?.users ?? const [];
         _searching = false;
+        _lastQuery = trimmed;
       });
     });
   }
 
+  void _retrySearch() => _onSearchChanged(_searchController.text);
+
   void _selectUser(VpnUser user) {
     HapticFeedback.selectionClick();
     FocusScope.of(context).unfocus();
+    _debounce?.cancel();
     setState(() {
       _recipient = user;
-      _results = [];
+      _results = const [];
+      _searching = false;
+      _searchFailed = false;
+      _lastQuery = '';
       _searchController.clear();
     });
   }
 
   void _clearRecipient() {
+    _debounce?.cancel();
     setState(() {
       _recipient = null;
-      _results = [];
+      _results = const [];
+      _searching = false;
+      _searchFailed = false;
+      _lastQuery = '';
       _searchController.clear();
     });
   }
@@ -112,87 +154,103 @@ class _SendNotificationScreenState extends State<SendNotificationScreen> {
       _bodyController.text.trim().isNotEmpty &&
       (_broadcast || _recipient != null);
 
+  /// SEND_NOTI_FIREFORGET_V2 — the tap hands off; it does not wait.
+  ///
+  /// The old flow awaited sendNotificationToUser before popping. userId 'all'
+  /// fans out server-side to every user the agent owns, so the agent sat on a
+  /// spinner for the whole fan-out, and the send they run most is the slowest
+  /// one. Everything that needs a decision from them — validation, and the
+  /// broadcast confirmation — still happens before anything is sent. The POST
+  /// does not, so it no longer holds the screen open.
   Future<void> _send() async {
     if (!(_formKey.currentState?.validate() ?? false)) return;
-    if (!_broadcast && _recipient == null) return;
 
-    // A broadcast cannot be recalled and lands on every one of the agent's
-    // users at once, so it is confirmed. A single send is not.
-    if (_broadcast) {
-      final ok = await showDialog<bool>(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          icon: const AppIconBadge(
-            icon: Iconsax.send_2,
-            color: AppColors.warning,
-            background: AppColors.warningWash,
-            size: 22,
-            padding: 12,
-          ),
-          title: const Text('Send to everyone?'),
-          content: Text(
-            'This goes to all of your users as a push notification. It cannot '
-            'be recalled.',
-            style: Theme.of(ctx).textTheme.bodyMedium,
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('Send to all'),
-            ),
-          ],
-        ),
-      );
-      if (ok != true) return;
-    }
+    // Everything the background call needs is copied out NOW. Once the route
+    // pops, this State is disposed and its controllers with it.
+    final broadcast = _broadcast;
+    final recipient = _recipient;
+    if (!broadcast && recipient == null) return;
 
-    // ANALYZER_CLEAN_V1 — the confirm dialog was awaited above.
-    if (!mounted) return;
+    final title = _titleController.text.trim();
+    final body = _bodyController.text.trim();
+    final userId = broadcast ? 'all' : recipient!.id.toString();
+    final audience = broadcast ? _kEveryone : recipient!.username;
+
     FocusScope.of(context).unfocus();
     HapticFeedback.mediumImpact();
-    setState(() => _sending = true);
 
-    final success = await _service.sendNotificationToUser(
-      userId: _broadcast ? 'all' : _recipient!.id.toString(),
-      title: _titleController.text.trim(),
-      body: _bodyController.text.trim(),
-    );
-
-    if (!mounted) return;
-    setState(() => _sending = false);
-
-    if (!success) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Could not send the notification.')),
+    // A broadcast cannot be recalled and lands on every one of the agent's
+    // users at once, so it is confirmed — and the dialog states what is about
+    // to go out, rather than only asking a second time. A single send is not
+    // confirmed.
+    if (broadcast) {
+      final ok = await confirmAction(
+        context,
+        title: 'အားလုံးကို ပို့မလား',
+        message:
+            'သင့်အသုံးပြုသူအားလုံးထံ push notification အဖြစ် ရောက်ပါမည်။ '
+            'ပို့ပြီးပါက ပြန်ရုပ်သိမ်း၍ မရပါ။',
+        confirmLabel: 'အားလုံးကို ပို့မည်',
+        destructive: true,
+        details: [
+          const ConfirmDetail('လက်ခံမည့်သူ', _kEveryone, emphasise: true),
+          ConfirmDetail('ခေါင်းစဉ်', title),
+          ConfirmDetail('စာကိုယ်', _clip(body)),
+        ],
       );
-      return;
+      if (!ok) return;
+      // The dialog was awaited; the screen may have gone in the meantime.
+      if (!mounted) return;
     }
 
+    // Both captured while the route is still on the stack.
+    //
+    // MaterialApp builds its ScaffoldMessenger ABOVE the Navigator, and
+    // main.dart passes no scaffoldMessengerKey, so every route here resolves
+    // to that one root messenger. It is not part of the route being popped,
+    // which is what makes it still usable when the POST finishes.
     final messenger = ScaffoldMessenger.of(context);
-    Navigator.of(context).pop(true);
-    messenger.showSnackBar(
-      SnackBar(
-        content: Text(
-          _broadcast
-              ? 'Sent to all your users.'
-              : 'Sent to ${_recipient!.username}.',
+    final navigator = Navigator.of(context);
+
+    navigator.pop(true);
+    messenger
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        const SnackBar(
+          content: Text('ပို့နေပါသည်'),
+          duration: Duration(seconds: 2),
         ),
+      );
+
+    // Unawaited on purpose. _deliver is a top-level function that holds no
+    // reference to this State and swallows every error, so nothing escapes
+    // into the zone and nothing reaches a disposed State.
+    unawaited(
+      _deliver(
+        service: _service,
+        messenger: messenger,
+        userId: userId,
+        title: title,
+        body: body,
+        audience: audience,
       ),
     );
   }
 
   // ── Build ───────────────────────────────────────────────────────────────
 
+  // SEND_NOTI_BUILD_V2 — Burmese throughout, an explicit keyboard chain, and
+  // the two text-dependent subtrees pulled under AnimatedBuilder so a
+  // keystroke no longer rebuilds the search field beside them.
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.background,
-      appBar: AppBar(title: const Text('Send notification')),
+      appBar: AppBar(title: const Text('အကြောင်းကြားစာ ပို့ရန်')),
       body: GestureDetector(
+        // Opaque so a tap on the page's empty space puts the keyboard away;
+        // children are still hit-tested first.
+        behavior: HitTestBehavior.opaque,
         onTap: () => FocusScope.of(context).unfocus(),
         child: Column(
           children: [
@@ -205,7 +263,7 @@ class _SendNotificationScreenState extends State<SendNotificationScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      const AppSectionHeader(title: 'Who receives this'),
+                      const AppSectionHeader(title: 'ဘယ်သူ့ဆီ ပို့မလဲ'),
                       const SizedBox(height: 10),
                       _AudienceToggle(
                         broadcast: _broadcast,
@@ -222,17 +280,23 @@ class _SendNotificationScreenState extends State<SendNotificationScreen> {
                           recipient: _recipient,
                           results: _results,
                           searching: _searching,
+                          failed: _searchFailed,
+                          lastQuery: _lastQuery,
                           onChanged: _onSearchChanged,
                           onSelect: _selectUser,
                           onClear: _clearRecipient,
+                          onRetry: _retrySearch,
                         ),
                       ],
                       const SizedBox(height: 22),
-                      const AppSectionHeader(title: 'Message'),
+                      const AppSectionHeader(title: 'စာ'),
                       const SizedBox(height: 10),
                       TextFormField(
                         controller: _titleController,
                         textInputAction: TextInputAction.next,
+                        // Explicit, so "next" always lands on the body rather
+                        // than on whatever traversal order decides.
+                        onFieldSubmitted: (_) => _bodyFocus.requestFocus(),
                         maxLength: 65,
                         // 65 is roughly where Android and iOS truncate a
                         // notification title; past it the tail is written but
@@ -251,15 +315,24 @@ class _SendNotificationScreenState extends State<SendNotificationScreen> {
                                   context,
                                 ).textTheme.bodySmall?.copyWith(fontSize: 10),
                               ),
-                        decoration: const InputDecoration(labelText: 'Title'),
+                        decoration: const InputDecoration(
+                          labelText: 'ခေါင်းစဉ်',
+                        ),
                         validator: (v) =>
-                            (v ?? '').trim().isEmpty ? 'Enter a title' : null,
+                            (v ?? '').trim().isEmpty ? 'ခေါင်းစဉ် ထည့်ပါ' : null,
                       ),
                       const SizedBox(height: 8),
                       TextFormField(
                         controller: _bodyController,
+                        focusNode: _bodyFocus,
                         maxLines: 4,
                         maxLength: 240,
+                        // Last field in the chain. done ends editing and puts
+                        // the keyboard away, which uncovers the send bar; it
+                        // deliberately does not fire the send, because an
+                        // accidental keyboard tap that broadcast to every user
+                        // could not be taken back.
+                        textInputAction: TextInputAction.done,
                         buildCounter:
                             (
                               _, {
@@ -275,36 +348,109 @@ class _SendNotificationScreenState extends State<SendNotificationScreen> {
                                 ).textTheme.bodySmall?.copyWith(fontSize: 10),
                               ),
                         decoration: const InputDecoration(
-                          labelText: 'Message',
+                          labelText: 'စာကိုယ်',
                           alignLabelWithHint: true,
                         ),
                         validator: (v) =>
-                            (v ?? '').trim().isEmpty ? 'Enter a message' : null,
+                            (v ?? '').trim().isEmpty ? 'စာကိုယ် ထည့်ပါ' : null,
                       ),
                       const SizedBox(height: 22),
-                      const AppSectionHeader(title: 'Preview'),
+                      const AppSectionHeader(title: 'နမူနာ'),
                       const SizedBox(height: 10),
-                      _Preview(
-                        title: _titleController.text.trim(),
-                        body: _bodyController.text.trim(),
+                      AnimatedBuilder(
+                        animation: _message,
+                        builder: (context, _) => _Preview(
+                          title: _titleController.text.trim(),
+                          body: _bodyController.text.trim(),
+                        ),
                       ),
                     ],
                   ),
                 ),
               ),
             ),
-            _SendBar(
-              broadcast: _broadcast,
-              recipient: _recipient?.username,
-              enabled: _canSend,
-              busy: _sending,
-              onSend: _send,
+            AnimatedBuilder(
+              animation: _message,
+              builder: (context, _) => _SendBar(
+                broadcast: _broadcast,
+                recipient: _recipient?.username,
+                enabled: _canSend,
+                onSend: _send,
+              ),
             ),
           ],
         ),
       ),
     );
   }
+}
+
+// ── Background delivery ───────────────────────────────────────────────────
+
+/// SEND_NOTI_DELIVER_V2 — what the label of a broadcast is called everywhere
+/// on this screen. One constant so the confirm dialog, the send bar and both
+/// result snackbars cannot drift apart.
+const String _kEveryone = 'အားလုံး';
+
+/// Shortens a message for a confirmation row. The dialog is there to show what
+/// is about to go out, not to reproduce it.
+String _clip(String text, [int limit = 70]) =>
+    text.length <= limit ? text : '${text.substring(0, limit).trimRight()}…';
+
+/// Runs after the screen has already closed.
+///
+/// Deliberately top-level: it closes over no State, so there is no way for it
+/// to touch a disposed one. It is handed copies of everything it needs and one
+/// ScaffoldMessengerState, which lives above the Navigator and therefore
+/// outlived the route that started this.
+///
+/// Every path ends in a message. This future is unawaited, so an error escaping
+/// it would bring down the zone — and worse, a broadcast that quietly failed
+/// would leave the agent believing every one of their users had been told.
+Future<void> _deliver({
+  required NotificationListService service,
+  required ScaffoldMessengerState messenger,
+  required String userId,
+  required String title,
+  required String body,
+  required String audience,
+}) async {
+  var sent = false;
+  try {
+    sent = await service.sendNotificationToUser(
+      userId: userId,
+      title: title,
+      body: body,
+    );
+  } catch (e) {
+    // sendNotificationToUser already catches its own DioExceptions; this is
+    // the backstop for anything it does not, because there is no caller left
+    // above us to catch it.
+    AppLog.e('send_notification', e);
+  }
+
+  // ScaffoldMessengerState is a State, so `mounted` is the same guard a widget
+  // uses. It is false only once the app itself is going away, at which point
+  // there is nobody left to tell.
+  if (!messenger.mounted) {
+    AppLog.d('send_notification', 'messenger gone before result was shown');
+    return;
+  }
+
+  messenger
+    ..hideCurrentSnackBar()
+    ..showSnackBar(
+      SnackBar(
+        content: Text(
+          sent
+              ? '$audience ထံ ပို့ပြီးပါပြီ'
+              : '$audience ထံ ပို့၍ မရပါ။ ပြန်လည်ကြိုးစားပေးပါ။',
+        ),
+        backgroundColor: sent ? AppColors.ink : AppColors.danger,
+        // A failure has to survive long enough to be read and acted on.
+        duration: Duration(seconds: sent ? 3 : 6),
+      ),
+    );
 }
 
 // ── Audience ──────────────────────────────────────────────────────────────
@@ -322,7 +468,7 @@ class _AudienceToggle extends StatelessWidget {
         Expanded(
           child: _AudienceOption(
             icon: Iconsax.user,
-            label: 'One user',
+            label: 'တစ်ဦးချင်း',
             selected: !broadcast,
             color: AppColors.accentInk,
             onTap: () => onChanged(false),
@@ -332,7 +478,7 @@ class _AudienceToggle extends StatelessWidget {
         Expanded(
           child: _AudienceOption(
             icon: Iconsax.profile_2user,
-            label: 'All my users',
+            label: _kEveryone,
             selected: broadcast,
             // Amber, not brand green: this option reaches everyone at once and
             // should not look like the safe default.
@@ -369,6 +515,10 @@ class _AudienceOption extends StatelessWidget {
         onTap: onTap,
         borderRadius: BorderRadius.circular(AppTheme.radiusMd),
         child: Container(
+          // SEND_NOTI_TAP_V2 — 13 + 17 + 13 measured 43pt, one short of the
+          // 44pt floor. Nothing about what is drawn changes; the hit area is
+          // what grows.
+          constraints: const BoxConstraints(minHeight: 48),
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 13),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(AppTheme.radiusMd),
@@ -407,23 +557,35 @@ class _AudienceOption extends StatelessWidget {
   }
 }
 
+// SEND_NOTI_RECIPIENT_V2 — four states below the search box instead of one.
 class _RecipientField extends StatelessWidget {
   final TextEditingController controller;
   final VpnUser? recipient;
   final List<VpnUser> results;
   final bool searching;
+
+  /// The last search failed outright — getVpnUsers returned null.
+  final bool failed;
+
+  /// The query [results] belongs to; empty means nothing has been searched.
+  final String lastQuery;
+
   final ValueChanged<String> onChanged;
   final ValueChanged<VpnUser> onSelect;
   final VoidCallback onClear;
+  final VoidCallback onRetry;
 
   const _RecipientField({
     required this.controller,
     required this.recipient,
     required this.results,
     required this.searching,
+    required this.failed,
+    required this.lastQuery,
     required this.onChanged,
     required this.onSelect,
     required this.onClear,
+    required this.onRetry,
   });
 
   @override
@@ -433,11 +595,12 @@ class _RecipientField extends StatelessWidget {
     // Once chosen, the field is replaced by the choice. Leaving a search box
     // with the name typed into it left it ambiguous whether the send was
     // aimed at that user or at whatever was in the box.
-    if (recipient != null) {
+    final chosen = recipient;
+    if (chosen != null) {
       return AppCard(
         radius: AppTheme.radiusMd,
         showShadow: false,
-        padding: const EdgeInsets.fromLTRB(12, 10, 6, 10),
+        padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
         tone: SurfaceTone.wash,
         washColor: AppColors.accentWash,
         child: Row(
@@ -451,25 +614,41 @@ class _RecipientField extends StatelessWidget {
             ),
             const SizedBox(width: 10),
             Expanded(
-              child: Text(
-                recipient!.username,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: t.bodyLarge?.copyWith(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w700,
-                ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('ရွေးထားသူ', style: t.bodySmall),
+                  Text(
+                    chosen.username,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: t.bodyLarge?.copyWith(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
               ),
             ),
+            const SizedBox(width: 8),
+            // The glyph stays 18pt; the button underneath it is 44pt square.
             IconButton(
               onPressed: onClear,
+              tooltip: 'ဖျက်မည်',
+              style: IconButton.styleFrom(
+                minimumSize: const Size(44, 44),
+                padding: EdgeInsets.zero,
+                foregroundColor: AppColors.textTertiary,
+              ),
               icon: const Icon(Iconsax.close_circle, size: 18),
-              color: AppColors.textTertiary,
             ),
           ],
         ),
       );
     }
+
+    final shown = results.take(6).toList(growable: false);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -477,8 +656,11 @@ class _RecipientField extends StatelessWidget {
         TextField(
           controller: controller,
           onChanged: onChanged,
+          // Its own action. This field is not part of the title -> body chain;
+          // "next" from here used to land wherever traversal decided.
+          textInputAction: TextInputAction.search,
           decoration: InputDecoration(
-            hintText: 'Search by username',
+            hintText: 'Username ဖြင့် ရှာပါ',
             prefixIcon: const Icon(Iconsax.search_normal_1, size: 18),
             suffixIcon: searching
                 ? const Padding(
@@ -492,44 +674,167 @@ class _RecipientField extends StatelessWidget {
                 : null,
           ),
         ),
-        if (results.isNotEmpty) ...[
-          const SizedBox(height: 8),
-          AppCard(
-            radius: AppTheme.radiusMd,
-            padding: EdgeInsets.zero,
-            child: Column(
-              children: [
-                // Capped: a search matching hundreds should not turn the form
-                // into a user list.
-                for (final user in results.take(6))
-                  InkWell(
-                    onTap: () => onSelect(user),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 14,
-                        vertical: 11,
-                      ),
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              user.username,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: t.bodyLarge?.copyWith(fontSize: 14),
-                            ),
+        // Nothing is claimed while a search is in flight.
+        if (!searching) ...[
+          if (failed) ...[
+            const SizedBox(height: 8),
+            // A dropped request is not an answer about who exists.
+            _SearchNote(
+              icon: Iconsax.wifi_square,
+              color: AppColors.danger,
+              wash: AppColors.dangerWash,
+              title: 'ရှာဖွေ၍ မရပါ',
+              message: 'အင်တာနက် ချိတ်ဆက်မှုကို စစ်ပြီး ပြန်ကြိုးစားပါ။',
+              actionLabel: 'ပြန်ကြိုးစားမည်',
+              onAction: onRetry,
+            ),
+          ] else if (shown.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            AppCard(
+              radius: AppTheme.radiusMd,
+              padding: EdgeInsets.zero,
+              child: Column(
+                children: [
+                  // Capped: a search matching hundreds should not turn the
+                  // form into a user list.
+                  for (var i = 0; i < shown.length; i++) ...[
+                    if (i > 0) const Divider(height: 1),
+                    InkWell(
+                      onTap: () => onSelect(shown[i]),
+                      child: ConstrainedBox(
+                        // 14 + 20 + 14 was 42pt. Padding alone cannot be
+                        // trusted here because the row's height follows the
+                        // text scale.
+                        constraints: const BoxConstraints(minHeight: 44),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 14,
+                            vertical: 10,
                           ),
-                          if (user.planName != null)
-                            Text(user.planName!, style: t.bodySmall),
-                        ],
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  shown[i].username,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: t.bodyLarge?.copyWith(fontSize: 14),
+                                ),
+                              ),
+                              if (shown[i].planName != null) ...[
+                                const SizedBox(width: 10),
+                                Text(shown[i].planName!, style: t.bodySmall),
+                              ],
+                            ],
+                          ),
+                        ),
                       ),
                     ),
+                  ],
+                  if (results.length > shown.length)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(14, 8, 14, 10),
+                      child: Text(
+                        'ပထမ ${shown.length} ဦးသာ ပြထားသည်။ ပိုတိကျအောင် ရှာပါ။',
+                        style: t.bodySmall,
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ] else if (lastQuery.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            // Searched, and the server answered: nobody.
+            _SearchNote(
+              icon: Iconsax.search_status,
+              color: AppColors.textTertiary,
+              wash: AppColors.surfaceAlt,
+              title: 'ရှာမတွေ့ပါ',
+              message: '"$lastQuery" နှင့် ကိုက်ညီသူ မရှိပါ။',
+            ),
+          ],
+        ],
+      ],
+    );
+  }
+}
+
+/// One-line explanation under the search box, with an optional retry.
+///
+/// Built from padding and MainAxisSize.min rather than a fixed height, so it
+/// grows with the text scale instead of clipping.
+class _SearchNote extends StatelessWidget {
+  final IconData icon;
+  final Color color;
+  final Color wash;
+  final String title;
+  final String message;
+  final String? actionLabel;
+  final VoidCallback? onAction;
+
+  const _SearchNote({
+    required this.icon,
+    required this.color,
+    required this.wash,
+    required this.title,
+    required this.message,
+    this.actionLabel,
+    this.onAction,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = Theme.of(context).textTheme;
+
+    return AppCard(
+      radius: AppTheme.radiusMd,
+      showShadow: false,
+      padding: const EdgeInsets.all(12),
+      tone: SurfaceTone.wash,
+      washColor: wash,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          AppIconBadge(
+            icon: icon,
+            color: color,
+            background: AppColors.surface,
+            size: 15,
+            padding: 8,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: t.bodyLarge?.copyWith(
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.textPrimary,
                   ),
+                ),
+                const SizedBox(height: 2),
+                Text(message, style: t.bodySmall),
+                if (actionLabel != null && onAction != null) ...[
+                  const SizedBox(height: 4),
+                  TextButton(
+                    onPressed: onAction,
+                    style: TextButton.styleFrom(
+                      minimumSize: const Size(0, 44),
+                      padding: const EdgeInsets.symmetric(horizontal: 4),
+                      alignment: Alignment.centerLeft,
+                    ),
+                    child: Text(actionLabel!),
+                  ),
+                ],
               ],
             ),
           ),
         ],
-      ],
+      ),
     );
   }
 }
@@ -547,10 +852,14 @@ class _Preview extends StatelessWidget {
 
   const _Preview({required this.title, required this.body});
 
+  // SEND_NOTI_PREVIEW_V2 — `empty` computed a value that was then ignored:
+  // `empty ? 'Title' : (title.isEmpty ? 'Title' : title)` is just
+  // `title.isEmpty ? ... : title`. And the placeholders read as content rather
+  // than as a gap, so an agent could send a message whose body was the word
+  // the preview had been showing them all along.
   @override
   Widget build(BuildContext context) {
     final t = Theme.of(context).textTheme;
-    final empty = title.isEmpty && body.isEmpty;
 
     return AppCard(
       radius: AppTheme.radiusMd,
@@ -588,8 +897,9 @@ class _Preview extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                // SEND_NOTI_PREVIEW_TEXT_V2
                 Text(
-                  empty ? 'Title' : (title.isEmpty ? 'Title' : title),
+                  title.isEmpty ? 'ခေါင်းစဉ် မထည့်ရသေးပါ' : title,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: t.bodyLarge?.copyWith(
@@ -602,7 +912,7 @@ class _Preview extends StatelessWidget {
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  body.isEmpty ? 'Your message appears here.' : body,
+                  body.isEmpty ? 'စာကိုယ် မထည့်ရသေးပါ' : body,
                   maxLines: 3,
                   overflow: TextOverflow.ellipsis,
                   style: t.bodySmall?.copyWith(
@@ -615,7 +925,7 @@ class _Preview extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 8),
-          Text('now', style: t.bodySmall?.copyWith(fontSize: 10)),
+          Text('ယခု', style: t.bodySmall?.copyWith(fontSize: 10)),
         ],
       ),
     );
@@ -624,18 +934,19 @@ class _Preview extends StatelessWidget {
 
 // ── Send bar ──────────────────────────────────────────────────────────────
 
+// SEND_NOTI_SENDBAR_V2 — `busy` is gone with the blocking send. The screen
+// closes on the tap, so there is no window in which this bar could be busy and
+// no second tap to guard against.
 class _SendBar extends StatelessWidget {
   final bool broadcast;
   final String? recipient;
   final bool enabled;
-  final bool busy;
   final VoidCallback onSend;
 
   const _SendBar({
     required this.broadcast,
     required this.recipient,
     required this.enabled,
-    required this.busy,
     required this.onSend,
   });
 
@@ -658,11 +969,12 @@ class _SendBar extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text('Sending to', style: t.bodySmall),
+                  // SEND_NOTI_SENDBAR_TEXT_V2
+                  Text('ပို့မည့်သူ', style: t.bodySmall),
                   Text(
                     broadcast
-                        ? 'All your users'
-                        : (recipient ?? 'No one selected'),
+                        ? 'အသုံးပြုသူအားလုံး'
+                        : (recipient ?? 'မရွေးရသေးပါ'),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: t.bodyLarge?.copyWith(
@@ -679,19 +991,12 @@ class _SendBar extends StatelessWidget {
               ),
             ),
             const SizedBox(width: 12),
+            // SEND_NOTI_SENDBUTTON_V2 — no spinner state: the tap hands the
+            // send to the background and this screen closes underneath it.
             FilledButton.icon(
-              onPressed: enabled && !busy ? onSend : null,
-              icon: busy
-                  ? const SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: AppColors.textOnAccent,
-                      ),
-                    )
-                  : const Icon(Iconsax.send_1, size: 17),
-              label: Text(busy ? 'Sending' : 'Send'),
+              onPressed: enabled ? onSend : null,
+              icon: const Icon(Iconsax.send_1, size: 17),
+              label: const Text('ပို့မည်'),
             ),
           ],
         ),

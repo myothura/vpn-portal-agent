@@ -56,10 +56,22 @@ class _ProfitLossScreenState extends State<ProfitLossScreen> {
     super.dispose();
   }
 
+  /// PL_PREFETCH_V1 - the next page is asked for 1200px from the bottom.
+  ///
+  /// At 600 the request went out about two rows before the list ran out, so
+  /// on a Myanmar mobile connection the agent reached the end and then
+  /// waited on a spinner. 1200 is roughly twenty rows of runway, enough for
+  /// a normal round trip to land before it is needed.
+  ///
+  /// The guards are unchanged and still do the work: _loadingMore blocks a
+  /// second request while one is in flight, _loading blocks one during a
+  /// full reload, the page counter stops at directSalesLastPage, and
+  /// _moreFailed stops the scroll-driven retry after a failure. Moving the
+  /// line only makes this fire earlier, not more often.
   void _onScroll() {
     if (!_scrollController.hasClients) return;
     final p = _scrollController.position;
-    if (p.pixels >= p.maxScrollExtent - 600) _loadMoreSales();
+    if (p.pixels >= p.maxScrollExtent - 1200) _loadMoreSales();
   }
 
   /// [retry] is the agent tapping the failed-page notice. Scroll-driven
@@ -326,113 +338,11 @@ class _ProfitLossScreenState extends State<ProfitLossScreen> {
                         parent: BouncingScrollPhysics(),
                       ),
                       slivers: [
-                        SliverPadding(
-                          padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-                          sliver: SliverToBoxAdapter(
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              crossAxisAlignment: CrossAxisAlignment.stretch,
-                              children: [
-                                _MonthPicker(
-                                  month: report.month,
-                                  months: report.months,
-                                  onChanged: (m) => _load(month: m),
-                                ),
-                                const SizedBox(height: 14),
-                                _HeadlineCard(summary: report.summary),
-                                const SizedBox(height: 20),
-                                _Breakdown(
-                                  title: 'Revenue',
-                                  lines: report.summary.revenueLines,
-                                  total: report.summary.revenueTotal,
-                                  color: AppColors.accentInk,
-                                ),
-                                const SizedBox(height: 16),
-                                _Breakdown(
-                                  title: 'Expenses',
-                                  lines: report.summary.expenseLines,
-                                  total: report.summary.expenseTotal,
-                                  color: AppColors.danger,
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                        if (report.entries.isNotEmpty) ...[
-                          SliverPadding(
-                            padding: const EdgeInsets.fromLTRB(16, 22, 16, 10),
-                            sliver: SliverToBoxAdapter(
-                              child: _SectionHead(
-                                icon: Iconsax.edit_2,
-                                color: AppColors.violet,
-                                title: 'Manual entries',
-                                subtitle: 'Costs and income entered by hand',
-                                count: report.entries.length,
-                              ),
-                            ),
-                          ),
-                          SliverPadding(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 16,
-                            ),
-                            sliver: SliverList(
-                              delegate: SliverChildBuilderDelegate((_, i) {
-                                final entry = report.entries[i];
-                                return Padding(
-                                  padding: const EdgeInsets.only(bottom: 8),
-                                  child: _EntryRow(
-                                    entry: entry,
-                                    onDelete: () => _deleteEntry(entry),
-                                  ),
-                                );
-                              }, childCount: report.entries.length),
-                            ),
-                          ),
-                        ],
-                        if (report.topups.isNotEmpty) ...[
-                          SliverPadding(
-                            padding: const EdgeInsets.fromLTRB(16, 22, 16, 10),
-                            sliver: SliverToBoxAdapter(
-                              child: _SectionHead(
-                                icon: Iconsax.wallet_add,
-                                color: AppColors.accentInk,
-                                title: 'Agent top-ups',
-                                // Says which of the two numbers on each row
-                                // is the revenue: the cash, not the credit.
-                                subtitle: 'Cash paid in by agents',
-                                count: report.topups.length,
-                              ),
-                            ),
-                          ),
-                          SliverPadding(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 16,
-                            ),
-                            sliver: SliverList(
-                              delegate: SliverChildBuilderDelegate(
-                                (_, i) => Padding(
-                                  padding: const EdgeInsets.only(bottom: 8),
-                                  child: _TopupRowCard(row: report.topups[i]),
-                                ),
-                                childCount: report.topups.length,
-                              ),
-                            ),
-                          ),
-                        ],
-                        SliverPadding(
-                          padding: const EdgeInsets.fromLTRB(16, 22, 16, 10),
-                          sliver: SliverToBoxAdapter(
-                            child: _SectionHead(
-                              icon: Iconsax.shopping_cart,
-                              color: AppColors.info,
-                              title: 'Direct sales',
-                              // Says what tapping does before the agent taps:
-                              // it changes the month's revenue.
-                              subtitle: 'Tap a row to exclude it from revenue',
-                              count: report.directSalesTotal,
-                            ),
-                          ),
-                        ),
+                        // PL_HEADCACHE_CALL_V1 - everything above the sales
+                        // list comes back as the same widget instances until
+                        // the report itself changes, so appending a page of
+                        // sales no longer rebuilds the header.
+                        ..._headSliversFor(report),
                         SliverPadding(
                           padding: const EdgeInsets.symmetric(horizontal: 16),
                           sliver: SliverList(
@@ -461,6 +371,148 @@ class _ProfitLossScreenState extends State<ProfitLossScreen> {
               ],
             ),
     );
+  }
+
+  /// PL_HEADCACHE_V1 - the slivers above the sales list, built once per
+  /// report instead of once per appended page.
+  ///
+  /// _loadMoreSales ends in a setState, and a setState rebuilds the whole
+  /// CustomScrollView: the month picker with its own horizontal ListView,
+  /// the headline card, both breakdowns with a LinearProgressIndicator per
+  /// line, and all three section heads. None of it depends on how many
+  /// sales have been loaded, so a month that pages nine times rebuilt it
+  /// nine times for nothing.
+  ///
+  /// They are held here as widget instances keyed to the report they were
+  /// built from. When build() hands Flutter the same instance it handed it
+  /// last frame, Element.updateChild finds the two equal and returns without
+  /// descending, so the subtree is not rebuilt at all. A different report -
+  /// a month change, a pull-to-refresh, the totals refetch after an exclude
+  /// - is a different object, the cache misses and they are built again,
+  /// which is exactly when they should be.
+  ///
+  /// This is only correct because nothing in here reads _sales, _salesPage,
+  /// _loadingMore or _moreFailed. The parts that do - the sales SliverList
+  /// and _salesFooter - are built fresh on every frame, below.
+  List<Widget>? _cachedHead;
+  ProfitLossReport? _cachedHeadFor;
+
+  List<Widget> _headSliversFor(ProfitLossReport report) {
+    final cached = _cachedHead;
+    if (cached != null && identical(_cachedHeadFor, report)) return cached;
+
+    final built = <Widget>[
+      SliverPadding(
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+        sliver: SliverToBoxAdapter(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _MonthPicker(
+                month: report.month,
+                months: report.months,
+                onChanged: (m) => _load(month: m),
+              ),
+              const SizedBox(height: 14),
+              _HeadlineCard(summary: report.summary),
+              const SizedBox(height: 20),
+              _Breakdown(
+                title: 'Revenue',
+                lines: report.summary.revenueLines,
+                total: report.summary.revenueTotal,
+                color: AppColors.accentInk,
+              ),
+              const SizedBox(height: 16),
+              _Breakdown(
+                title: 'Expenses',
+                lines: report.summary.expenseLines,
+                total: report.summary.expenseTotal,
+                color: AppColors.danger,
+              ),
+            ],
+          ),
+        ),
+      ),
+      if (report.entries.isNotEmpty) ...[
+        SliverPadding(
+          padding: const EdgeInsets.fromLTRB(16, 22, 16, 10),
+          sliver: SliverToBoxAdapter(
+            child: _SectionHead(
+              icon: Iconsax.edit_2,
+              color: AppColors.violet,
+              title: 'Manual entries',
+              subtitle: 'Costs and income entered by hand',
+              count: report.entries.length,
+            ),
+          ),
+        ),
+        SliverPadding(
+          padding: const EdgeInsets.symmetric(
+            horizontal: 16,
+          ),
+          sliver: SliverList(
+            delegate: SliverChildBuilderDelegate((_, i) {
+              final entry = report.entries[i];
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: _EntryRow(
+                  entry: entry,
+                  onDelete: () => _deleteEntry(entry),
+                ),
+              );
+            }, childCount: report.entries.length),
+          ),
+        ),
+      ],
+      if (report.topups.isNotEmpty) ...[
+        SliverPadding(
+          padding: const EdgeInsets.fromLTRB(16, 22, 16, 10),
+          sliver: SliverToBoxAdapter(
+            child: _SectionHead(
+              icon: Iconsax.wallet_add,
+              color: AppColors.accentInk,
+              title: 'Agent top-ups',
+              // Says which of the two numbers on each row
+              // is the revenue: the cash, not the credit.
+              subtitle: 'Cash paid in by agents',
+              count: report.topups.length,
+            ),
+          ),
+        ),
+        SliverPadding(
+          padding: const EdgeInsets.symmetric(
+            horizontal: 16,
+          ),
+          sliver: SliverList(
+            delegate: SliverChildBuilderDelegate(
+              (_, i) => Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: _TopupRowCard(row: report.topups[i]),
+              ),
+              childCount: report.topups.length,
+            ),
+          ),
+        ),
+      ],
+      SliverPadding(
+        padding: const EdgeInsets.fromLTRB(16, 22, 16, 10),
+        sliver: SliverToBoxAdapter(
+          child: _SectionHead(
+            icon: Iconsax.shopping_cart,
+            color: AppColors.info,
+            title: 'Direct sales',
+            // Says what tapping does before the agent taps:
+            // it changes the month's revenue.
+            subtitle: 'Tap a row to exclude it from revenue',
+            count: report.directSalesTotal,
+          ),
+        ),
+      ),
+    ];
+    _cachedHead = built;
+    _cachedHeadFor = report;
+    return built;
   }
 
   /// What sits below the last loaded sale.
@@ -1038,121 +1090,160 @@ class _SaleRow extends StatelessWidget {
     final t = Theme.of(context).textTheme;
     final username = sale.username;
 
-    return AppCard(
-      onTap: onTap,
-      radius: AppTheme.radiusMd,
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      tone: sale.excluded ? SurfaceTone.wash : SurfaceTone.plain,
-      washColor: AppColors.surfaceAlt,
-      child: Row(
-        children: [
-          // The same portraits as the user list, so a name recognised there is
-          // recognisable here. Greyed when the row is excluded.
-          //
-          // PL_OPACITY_V1 — the fade was an Opacity wrapper, and Opacity is
-          // a saveLayer: an offscreen buffer and a composite for every
-          // excluded row on screen, every frame. Neither child needs one.
-          // The placeholder fades through its own two colours, and Image
-          // folds opacity into the paint it already uses.
-          username == null
-              ? Container(
-                  width: 36,
-                  height: 36,
-                  decoration: BoxDecoration(
-                    color: sale.excluded
-                        ? AppColors.surfaceAlt.withValues(alpha: 0.4)
-                        : AppColors.surfaceAlt,
-                    shape: BoxShape.circle,
-                  ),
-                  alignment: Alignment.center,
-                  child: Icon(
-                    Iconsax.receipt_item,
-                    size: 16,
-                    color: sale.excluded
-                        ? AppColors.textTertiary.withValues(alpha: 0.4)
-                        : AppColors.textTertiary,
-                  ),
-                )
-              : ClipOval(
-                  child: Image.asset(
-                    _avatarFor(username),
+    // PL_ROW_FLAT_V1 - a sale row is not a card any more.
+    //
+    // AppCard gives every instance AppTheme.cardShadow: a BoxShadow with
+    // blurRadius 12. A blurred shadow is the most expensive thing painted on
+    // this page and there was one per visible row, re-blurred on every
+    // scroll frame. Rows stacked eight pixels apart never read as elevated
+    // anyway - the border is what separates them, and it is unchanged.
+    //
+    // The Material(color: Colors.transparent) that AppCard wraps its InkWell
+    // in goes with it. Scaffold already puts a Material above its body, so
+    // the ink still resolves; the splash was invisible either way, painted
+    // beneath an opaque fill.
+    //
+    // Fill, radius, border and padding below are the exact values AppCard
+    // produced for tone plain and tone wash, and the haptic is the one
+    // AppCard fires. AppCard itself is untouched - it is used on fifteen
+    // other screens where a card really is a card.
+    const shape = BorderRadius.all(Radius.circular(AppTheme.radiusMd));
+
+    return InkWell(
+      onTap: () {
+        HapticFeedback.selectionClick();
+        onTap();
+      },
+      borderRadius: shape,
+      child: Container(
+        decoration: BoxDecoration(
+          color: sale.excluded ? AppColors.surfaceAlt : AppColors.surface,
+          borderRadius: shape,
+          border: Border.all(
+            color: sale.excluded
+                ? Colors.black.withValues(alpha: 0.06)
+                : AppColors.border,
+          ),
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        child: Row(
+          children: [
+            // The same portraits as the user list, so a name recognised
+            // there is recognisable here. Greyed when the row is excluded.
+            //
+            // PL_OPACITY_V1 — the fade was an Opacity wrapper, and Opacity is
+            // a saveLayer: an offscreen buffer and a composite for every
+            // excluded row on screen, every frame. Neither child needs one.
+            // The placeholder fades through its own two colours, and Image
+            // folds opacity into the paint it already uses.
+            username == null
+                ? Container(
                     width: 36,
                     height: 36,
-                    fit: BoxFit.cover,
-                    opacity: sale.excluded ? _fadedAvatar : null,
+                    decoration: BoxDecoration(
+                      color: sale.excluded
+                          ? AppColors.surfaceAlt.withValues(alpha: 0.4)
+                          : AppColors.surfaceAlt,
+                      shape: BoxShape.circle,
+                    ),
+                    alignment: Alignment.center,
+                    child: Icon(
+                      Iconsax.receipt_item,
+                      size: 16,
+                      color: sale.excluded
+                          ? AppColors.textTertiary.withValues(alpha: 0.4)
+                          : AppColors.textTertiary,
+                    ),
+                  )
+                : ClipOval(
+                    child: Image.asset(
+                      _avatarFor(username),
+                      width: 36,
+                      height: 36,
+                      // PL_AVATAR_V1 - decoded at the size it is drawn at.
+                      // The two avatar files are 256 square and the slot is
+                      // 36 logical pixels, which is 108 physical on a 3x
+                      // screen. Without cacheWidth the whole 256x256 is
+                      // decoded and uploaded to the GPU, and the downscale
+                      // is redone on every draw. 108 is the most the slot
+                      // can actually use.
+                      cacheWidth: 108,
+                      fit: BoxFit.cover,
+                      opacity: sale.excluded ? _fadedAvatar : null,
+                    ),
                   ),
-                ),
-          const SizedBox(width: 11),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+            const SizedBox(width: 11),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    // The username leads, because that is what an agent scans
+                    // for. The full sentence was 60 characters of boilerplate
+                    // with the name buried in the middle.
+                    username ?? sale.description,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: t.bodyLarge?.copyWith(
+                      fontSize: 13.5,
+                      fontWeight: FontWeight.w700,
+                      color: sale.excluded
+                          ? AppColors.textTertiary
+                          : AppColors.textPrimary,
+                      decoration: sale.excluded
+                          ? TextDecoration.lineThrough
+                          : null,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Row(
+                    children: [
+                      if (username != null) ...[
+                        Flexible(
+                          child: Text(
+                            sale.action,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: t.bodySmall,
+                          ),
+                        ),
+                        Text(' · ', style: t.bodySmall),
+                      ],
+                      Text(_date(sale.createdAt), style: t.bodySmall),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 10),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
               children: [
                 Text(
-                  // The username leads, because that is what an agent scans
-                  // for. The full sentence was 60 characters of boilerplate
-                  // with the name buried in the middle.
-                  username ?? sale.description,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+                  Fmt.money.format(sale.amount),
                   style: t.bodyLarge?.copyWith(
                     fontSize: 13.5,
                     fontWeight: FontWeight.w700,
                     color: sale.excluded
                         ? AppColors.textTertiary
-                        : AppColors.textPrimary,
-                    decoration: sale.excluded
-                        ? TextDecoration.lineThrough
-                        : null,
+                        : AppColors.accentInk,
                   ),
                 ),
-                const SizedBox(height: 2),
-                Row(
-                  children: [
-                    if (username != null) ...[
-                      Flexible(
-                        child: Text(
-                          sale.action,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: t.bodySmall,
-                        ),
-                      ),
-                      Text(' · ', style: t.bodySmall),
-                    ],
-                    Text(_date(sale.createdAt), style: t.bodySmall),
-                  ],
-                ),
+                if (sale.excluded) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    'excluded',
+                    style: t.bodySmall?.copyWith(
+                      fontSize: 10,
+                      color: AppColors.warning,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
               ],
             ),
-          ),
-          const SizedBox(width: 10),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Text(
-                Fmt.money.format(sale.amount),
-                style: t.bodyLarge?.copyWith(
-                  fontSize: 13.5,
-                  fontWeight: FontWeight.w700,
-                  color: sale.excluded
-                      ? AppColors.textTertiary
-                      : AppColors.accentInk,
-                ),
-              ),
-              if (sale.excluded) ...[
-                const SizedBox(height: 2),
-                Text(
-                  'excluded',
-                  style: t.bodySmall?.copyWith(
-                    fontSize: 10,
-                    color: AppColors.warning,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ],
-            ],
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

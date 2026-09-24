@@ -55,6 +55,18 @@ class _AgentChatDetailScreenState extends State<AgentChatDetailScreen> {
   bool _userTyping = false;
   Timer? _typingTimer;
 
+  /// CHAT_FAST_DECISION_STATE_V1 — req_id -> 'approved' / 'rejected' for the
+  /// decisions made in this thread, drawn before the server has been told.
+  ///
+  /// A message is a Map here rather than a model, so the decision could in
+  /// principle be written onto the row; it is kept separate anyway because
+  /// _loadMessages(silent: true) replaces the whole list with the server's
+  /// copy, and that copy still carries the buttons until the backend has
+  /// processed the request. The map survives the reload, the row does not.
+  ///
+  /// Cleared for one id only, when its POST fails and the buttons must return.
+  final Map<int, String> _localDecisions = {};
+
   @override
   void initState() {
     super.initState();
@@ -379,6 +391,11 @@ class _AgentChatDetailScreenState extends State<AgentChatDetailScreen> {
   /// else: no user, no plan, no number. [meta] is the renewal message's own
   /// metadata, which is where those three facts already are.
   Future<void> _approve(int reqId, Map<String, dynamic> meta) async {
+    // CHAT_APPROVE_REENTRY_V1 — the modal barrier used to make a second tap
+    // impossible. The bubble losing its buttons does the same job now, but
+    // the retry action on the failure snackbar calls back in here directly.
+    if (_localDecisions.containsKey(reqId)) return;
+
     final cost = _idOf(meta['estimated_cost']) ?? 0;
     final planName = (meta['plan_name'] ?? '').toString();
     final months = _idOf(meta['duration_months']) ?? 0;
@@ -406,37 +423,129 @@ class _AgentChatDetailScreenState extends State<AgentChatDetailScreen> {
     );
     if (!confirmed || !mounted) return;
 
-    await _runGuarded(() async {
-      final result = await _chatService.approveRequest(reqId);
-      if (!mounted) return;
-      _toast(result['message']?.toString() ?? 'Done.');
-      _loadMessages(silent: true);
-    });
+    // CHAT_FAST_APPROVE_V1 — the bubble changes here, before the POST.
+    //
+    // _runGuarded put a PopScope spinner over the whole screen and held it
+    // for the length of the call, then a silent history reload followed. The
+    // barrier is off this path: the decision is drawn at once and the call
+    // runs behind it. _runGuarded stays for _sendPlanCard and the extend
+    // sheet, which both change the thread wholesale on a figure the agent
+    // typed and have nothing to show until they return.
+    setState(() => _localDecisions[reqId] = 'approved');
+    _toast('${widget.username} ၏ တောင်းဆိုမှုကို အတည်ပြုလိုက်ပါပြီ။');
+
+    await _settleDecision(
+      reqId,
+      'approved',
+      () => _chatService.approveRequest(reqId),
+      '${widget.username} ၏ တောင်းဆိုမှုကို အတည်မပြုနိုင်ပါ။ '
+          'တောင်းဆိုမှုကို ပြန်လည် ပြသထားပါသည်။ Credit လက်ကျန်နှင့် '
+          'အင်တာနက် ချိတ်ဆက်မှုကို စစ်ဆေးပြီး ထပ်မံ ကြိုးစားပါ။',
+      () => _approve(reqId, meta),
+    );
   }
 
   Future<void> _reject(int reqId) async {
+    // CHAT_FAST_REJECT_V1 — same shape as approve, and the confirmation is
+    // Burmese now: it is on a path this change rewrites and it names the user.
+    if (_localDecisions.containsKey(reqId)) return;
+
     final ok = await _confirm(
-      title: 'Reject this request?',
-      body: 'The user will be told it was not approved.',
-      actionLabel: 'Reject',
+      title: 'တောင်းဆိုမှုကို ငြင်းပယ်မလား',
+      body: '${widget.username} ထံသို့ အတည်မပြုကြောင်း အကြောင်းကြားပါမည်။',
+      actionLabel: 'ငြင်းပယ်မည်',
       actionColor: AppColors.danger,
     );
-    if (ok != true) return;
+    if (ok != true || !mounted) return;
 
-    await _runGuarded(() async {
-      final result = await _chatService.rejectRequest(reqId);
-      if (!mounted) return;
-      _toast(result['message']?.toString() ?? 'Rejected.');
+    setState(() => _localDecisions[reqId] = 'rejected');
+    _toast('${widget.username} ၏ တောင်းဆိုမှုကို ငြင်းပယ်လိုက်ပါပြီ။');
+
+    await _settleDecision(
+      reqId,
+      'rejected',
+      () => _chatService.rejectRequest(reqId),
+      '${widget.username} ၏ တောင်းဆိုမှုကို ငြင်းပယ်၍ မရပါ။ '
+          'တောင်းဆိုမှုကို ပြန်လည် ပြသထားပါသည်။ အင်တာနက် ချိတ်ဆက်မှုကို '
+          'စစ်ဆေးပြီး ထပ်မံ ကြိုးစားပါ။',
+      () => _reject(reqId),
+    );
+  }
+
+  /// CHAT_SETTLE_DECISION_V1 — runs the POST behind a decision already drawn.
+  ///
+  /// Nothing waits on this; the tap returned when the bubble changed. So it
+  /// catches everything, logs through AppLog.e, and finishes either quietly
+  /// (a silent history reload, so the thread picks up the server's own system
+  /// message) or loudly. It cannot finish without doing one of the two.
+  Future<void> _settleDecision(
+    int reqId,
+    String decision,
+    Future<Map<String, dynamic>> Function() send,
+    String failureMessage,
+    VoidCallback onRetry,
+  ) async {
+    Map<String, dynamic>? result;
+    try {
+      result = await send();
+    } catch (error) {
+      AppLog.e('chatDecision/$decision', error);
+    }
+    if (!mounted) return;
+
+    if (result != null && result['success'] != false) {
+      // Silent: no spinner, no second toast. The acknowledgement was shown at
+      // the tap, and _localDecisions keeps the bubble decided even though the
+      // reloaded copy of the message still carries its buttons.
       _loadMessages(silent: true);
-    });
+      return;
+    }
+
+    AppLog.e(
+      'chatDecision/$decision',
+      result?['message'] ?? 'request $reqId was not applied',
+    );
+    setState(() => _localDecisions.remove(reqId));
+    _decisionFailed(failureMessage, onRetry);
+  }
+
+  /// A decision that never reached the server.
+  ///
+  /// The bubble has already been restored by the caller. Red, eight seconds
+  /// rather than the default four, the user's name in the text, and the retry
+  /// on the snackbar itself — a bubble whose buttons quietly came back would
+  /// read as a tap that never registered.
+  void _decisionFailed(String message, VoidCallback onRetry) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          backgroundColor: AppColors.danger,
+          duration: const Duration(seconds: 8),
+          content: Text(
+            message,
+            style: const TextStyle(color: AppColors.textOnAccent),
+          ),
+          action: SnackBarAction(
+            label: 'ထပ်မံကြိုးစားမည်',
+            textColor: AppColors.textOnAccent,
+            onPressed: onRetry,
+          ),
+        ),
+      );
   }
 
   /// MONEY_SAFETY_V1 — one action at a time, with the screen blocked.
   ///
-  /// Approve, reject and extend all move credit, and none of them disabled
-  /// anything while they were in flight: a slow network showed no change on
-  /// screen, the agent tapped again, and the second POST went out. The
+  /// Extend and the plan card both change the thread wholesale and neither
+  /// disabled anything while it was in flight: a slow network showed no change
+  /// on screen, the agent tapped again, and the second POST went out. The
   /// barrier stops the tap and says the work is running.
+  ///
+  /// Approve and reject no longer come through here. They have something to
+  /// show the moment they are tapped, so blocking the screen behind a spinner
+  /// bought nothing but the wait.
   bool _actionBusy = false;
 
   Future<void> _runGuarded(Future<void> Function() action) async {
@@ -478,12 +587,21 @@ class _AgentChatDetailScreenState extends State<AgentChatDetailScreen> {
         title: Text(title),
         content: Text(body, style: Theme.of(ctx).textTheme.bodyMedium),
         actions: [
+          // CONFIRM_TAP_TARGET_44_V1 — the Material default is 40dp high,
+          // under the minimum, on a dialog whose confirm button can be
+          // destructive. minimumSize only: same padding, same type, same
+          // colours. The cancel label matches confirm_dialog.dart, which is
+          // what the rest of this screen's confirmations use.
           TextButton(
+            style: TextButton.styleFrom(minimumSize: const Size(64, 44)),
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancel'),
+            child: const Text('မလုပ်တော့ပါ'),
           ),
           FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: actionColor),
+            style: FilledButton.styleFrom(
+              backgroundColor: actionColor,
+              minimumSize: const Size(64, 44),
+            ),
             onPressed: () => Navigator.pop(ctx, true),
             child: Text(actionLabel),
           ),
@@ -664,8 +782,15 @@ class _AgentChatDetailScreenState extends State<AgentChatDetailScreen> {
                             final next = i + 1 < _messages.length
                                 ? _messages[i + 1]
                                 : null;
+                            // CHAT_BUBBLE_DECISION_V1 — null for every message
+                            // that is not a renewal request, and for a renewal
+                            // this agent has not decided on this device.
+                            final reqId = msg['req_id'];
                             return _MessageBubble(
                               msg: msg,
+                              renewalDecision: reqId is int
+                                  ? _localDecisions[reqId]
+                                  : null,
                               // Consecutive messages from one sender are drawn
                               // as a run: only the last keeps a tail and a
                               // timestamp. A column of identical bubbles each
@@ -957,6 +1082,12 @@ class _MessageBubble extends StatelessWidget {
   final bool showDaySeparator;
   final bool isFirstInRun;
   final bool isLastInRun;
+
+  /// BUBBLE_DECISION_FIELD_V1 — 'approved', 'rejected', or null when this
+  /// agent has made no decision on this request on this device. Only a
+  /// renewal bubble reads it.
+  final String? renewalDecision;
+
   final Future<void> Function(int, Map<String, dynamic>) onApprove;
   final Future<void> Function(int) onReject;
   final void Function(String, {bool isLocal}) onOpenImage;
@@ -966,6 +1097,7 @@ class _MessageBubble extends StatelessWidget {
     required this.showDaySeparator,
     this.isFirstInRun = true,
     this.isLastInRun = true,
+    this.renewalDecision,
     required this.onApprove,
     required this.onReject,
     required this.onOpenImage,
@@ -976,8 +1108,10 @@ class _MessageBubble extends StatelessWidget {
     final type = (msg['type'] ?? 'text').toString();
 
     final body = switch (type) {
+      // BUBBLE_DECISION_PASS_V1 — the only bubble that can be decided.
       'renewal_request' => _RenewalBubble(
         msg: msg,
+        decision: renewalDecision,
         onApprove: onApprove,
         onReject: onReject,
         onOpenImage: onOpenImage,
@@ -1262,12 +1396,20 @@ class _TextBubble extends StatelessWidget {
 /// Renewal request, with the decision buttons on the message itself.
 class _RenewalBubble extends StatelessWidget {
   final Map<String, dynamic> msg;
+
+  /// RENEWAL_BUBBLE_DECISION_V1 — set as soon as the agent confirms, before
+  /// the POST. The buttons are replaced by the outcome rather than disabled:
+  /// a greyed-out pair of buttons says "wait", and there is nothing to wait
+  /// for on this screen any more.
+  final String? decision;
+
   final Future<void> Function(int, Map<String, dynamic>) onApprove;
   final Future<void> Function(int) onReject;
   final void Function(String, {bool isLocal}) onOpenImage;
 
   const _RenewalBubble({
     required this.msg,
+    this.decision,
     required this.onApprove,
     required this.onReject,
     required this.onOpenImage,
@@ -1278,6 +1420,9 @@ class _RenewalBubble extends StatelessWidget {
     final t = Theme.of(context).textTheme;
     final meta = msg['metadata'] as Map<String, dynamic>? ?? {};
     final reqId = msg['req_id'];
+    // BUBBLE_DECIDED_LOCAL_V1 — a local, because a field cannot be promoted
+    // to non-null and this is read four times in the branch below.
+    final decided = decision;
     final planName = (meta['plan_name'] ?? 'Unknown plan').toString();
     final months = meta['duration_months'] ?? 0;
     final slots = meta['extra_device_slots'] ?? 0;
@@ -1347,6 +1492,29 @@ class _RenewalBubble extends StatelessWidget {
             ],
             if (reqId is int) ...[
               const SizedBox(height: 12),
+              // RENEWAL_BUBBLE_DECIDED_V1 — once decided the bubble shows the
+              // outcome in place of the buttons, from the tap onward. A
+              // failed POST clears the decision upstream and this row of
+              // buttons comes back exactly as it was.
+              if (decided != null)
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: AppPill(
+                    label: decided == 'approved'
+                        ? 'အတည်ပြုပြီး'
+                        : 'ငြင်းပယ်ပြီး',
+                    icon: decided == 'approved'
+                        ? Icons.check_rounded
+                        : Icons.close_rounded,
+                    color: decided == 'approved'
+                        ? AppColors.success
+                        : AppColors.danger,
+                    background: decided == 'approved'
+                        ? AppColors.successWash
+                        : AppColors.dangerWash,
+                  ),
+                )
+              else
               // TAP_TARGET_44_V1 — both were 38dp, inside a bubble, next to
               // each other, and one of them spends money. Raised to the 44
               // minimum; nothing else about them changes.

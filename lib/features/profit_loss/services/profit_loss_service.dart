@@ -12,11 +12,36 @@ import 'package:vpn_agent_app/features/profit_loss/models/profit_loss_model.dart
 class ProfitLossService {
   final Dio _dio = ApiClient().dio;
 
-  Future<ProfitLossReport?> getReport({String? month, int page = 1}) async {
+  /// PL_PAGESIZE_V1 - [perPage] asks the paginator for a usable page.
+  ///
+  /// The direct-sales block is a paginator and this call left it on the
+  /// endpoint's default, which is 15. A real month is several hundred
+  /// sales, so scrolling one end to end was around thirty round trips, and
+  /// every one of them is a stall the agent sees. 50 is the same list in
+  /// nine.
+  ///
+  /// It is sent on every call, the first page and the totals refetch
+  /// included, and that is deliberate: current_page and last_page come back
+  /// from the paginator and the screen compares them to decide whether more
+  /// exists. If two calls counted in different page sizes those two numbers
+  /// would disagree about where the end is.
+  ///
+  /// If the endpoint fixes its own page size and ignores per_page this is
+  /// inert - an unknown query parameter, not an error - and the screen is
+  /// no worse off than before.
+  Future<ProfitLossReport?> getReport({
+    String? month,
+    int page = 1,
+    int perPage = 50,
+  }) async {
     try {
       final response = await _dio.get(
         '/agent/profit-loss',
-        queryParameters: {if (month != null) 'month': month, 'page': page},
+        queryParameters: {
+          if (month != null) 'month': month,
+          'page': page,
+          'per_page': perPage,
+        },
       );
       if (response.statusCode == 200 && response.data != null) {
         return ProfitLossReport.fromJson(

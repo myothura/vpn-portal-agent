@@ -1,3 +1,5 @@
+import 'dart:async'; // AGENT_APP_K1_IMPORT — the post-send re-check timer.
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:iconsax/iconsax.dart';
@@ -50,6 +52,12 @@ class _NotificationScreenState extends State<NotificationScreen> {
   /// list carries a retry, rather than the list quietly going still.
   bool _pageFailed = false;
 
+  /// AGENT_APP_K1_FIELD — the second look after a send.
+  ///
+  /// The send screen no longer waits for its POST, so the refresh fired when
+  /// it pops can beat the server to the record.
+  Timer? _afterSend;
+
   int get _unread => _items.where((n) => !n.isRead).length;
 
   @override
@@ -62,6 +70,9 @@ class _NotificationScreenState extends State<NotificationScreen> {
 
   @override
   void dispose() {
+    // AGENT_APP_K1_DISPOSE
+    _afterSend?.cancel();
+    _scrollController.removeListener(_onScroll);
     _scrollController.dispose();
     super.dispose();
   }
@@ -351,7 +362,14 @@ class _NotificationScreenState extends State<NotificationScreen> {
                     .push<bool>(
                       AppTransitions.slide(const SendNotificationScreen()),
                     );
-                if (sent == true && mounted) _load(refresh: true);
+                // AGENT_APP_K1_REFRESH — ask twice, briefly apart.
+                if (sent == true && mounted) {
+                  _load(refresh: true);
+                  _afterSend?.cancel();
+                  _afterSend = Timer(const Duration(seconds: 2), () {
+                    if (mounted) _load(refresh: true);
+                  });
+                }
               },
               backgroundColor: AppColors.accentInk,
               foregroundColor: AppColors.textOnAccent,
