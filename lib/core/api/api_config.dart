@@ -73,4 +73,11 @@ class ApiConfig {
   static const String agentMonitorSnapshot = "/agent/monitor/snapshot";
   static const String agentMonitorOverall = "/agent/monitor/overall";
   static const String agentMonitorAsk = "/agent/monitor/ask";
+
+  /// MONITOR_ASYNC_V1 — the job id is appended to this.
+  ///
+  /// overall and ask hand back a key instead of an answer, because the model
+  /// takes 30 to 90 seconds and a phone on LTE cannot hold one request open
+  /// that long. The worker builds the answer; this is where it is collected.
+  static const String agentMonitorResult = "/agent/monitor/result/";
 }

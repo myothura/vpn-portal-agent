@@ -39,5 +39,16 @@ end
 post_install do |installer|
   installer.pods_project.targets.each do |target|
     flutter_additional_ios_build_settings(target)
+
+    # IOS_DEPLOYMENT_FLOOR_V1 — every pod compiles against this project's
+    # floor, not its own.
+    #
+    # Pods ship with targets as low as 9.0. Xcode 26 refuses anything below
+    # 15.0, so the archive failed with a Target Integrity error for each one.
+    # `platform :ios, '15.6'` above sets the floor for the Runner target only;
+    # this carries it into the generated Pods project.
+    target.build_configurations.each do |config|
+      config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.6'
+    end
   end
 end

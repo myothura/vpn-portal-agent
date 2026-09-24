@@ -1307,29 +1307,29 @@ class _AssistantTabState extends State<_AssistantTab>
 
     return Column(
       children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-          child: SizedBox(
-            width: double.infinity,
-            child: FilledButton.icon(
-              onPressed: _busy ? null : _overall,
-              icon: _busy
-                  ? const SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: AppColors.textOnAccent,
-                      ),
-                    )
-                  : const Icon(Iconsax.search_status),
-              label: Text(_busy ? 'စစ်နေပါတယ်…' : 'Overall အခြေအနေ စစ်မယ်'),
-              style: FilledButton.styleFrom(
-                minimumSize: const Size.fromHeight(52),
+        // OVERALL_BUTTON_HIDE_V2 — the button is only on the empty screen.
+        //
+        // V1 hid it while the answer was being built, because a greyed-out
+        // "စစ်နေပါတယ်…" said what the typing dots below already said. This
+        // goes further: once there is a conversation the button is a 52pt bar
+        // sitting on top of the thing the agent came to read. The first
+        // suggestion chip asks the same question, and the composer is always
+        // there, so nothing is lost by taking it off the answer screen.
+        if (!_busy && _log.isEmpty)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+            child: SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                onPressed: _overall,
+                icon: const Icon(Iconsax.search_status),
+                label: const Text('Overall အခြေအနေ စစ်မယ်'),
+                style: FilledButton.styleFrom(
+                  minimumSize: const Size.fromHeight(52),
+                ),
               ),
             ),
           ),
-        ),
         Expanded(
           child: _log.isEmpty
               ? _Suggestions(
@@ -1442,8 +1442,44 @@ class _Bubble extends StatelessWidget {
   }
 }
 
-class _Typing extends StatelessWidget {
+/// TYPING_DOTS_V1 — the three dots a chat shows while the other side writes.
+///
+/// A spinner in a message bubble reads as "loading", and on a reply that takes
+/// most of a minute that becomes "stuck". Dots read as "still writing", which
+/// is what is actually happening, and they cost one ticker.
+class _Typing extends StatefulWidget {
   const _Typing();
+
+  @override
+  State<_Typing> createState() => _TypingState();
+}
+
+class _TypingState extends State<_Typing>
+    with SingleTickerProviderStateMixin {
+  static const int _dots = 3;
+
+  /// One cycle for the whole group; each dot reads its own slice of it, so
+  /// three dots need one controller rather than three.
+  late final AnimationController _cycle = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1100),
+  )..repeat();
+
+  @override
+  void dispose() {
+    _cycle.dispose();
+    super.dispose();
+  }
+
+  /// 0 at rest, 1 at the top of the hop. Linear up then down over the first
+  /// half of the dot's slice, flat for the rest, so the group has a gap
+  /// between passes instead of rippling continuously.
+  double _lift(int index) {
+    final t = (_cycle.value - index * 0.16) % 1.0;
+    if (t >= 0.45) return 0;
+    final p = t / 0.45;
+    return p < 0.5 ? p * 2 : (1 - p) * 2;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1457,10 +1493,35 @@ class _Typing extends StatelessWidget {
           borderRadius: BorderRadius.circular(AppTheme.radiusMd),
           border: Border.all(color: AppColors.border),
         ),
-        child: const SizedBox(
-          width: 20,
-          height: 20,
-          child: CircularProgressIndicator(strokeWidth: 2),
+        child: SizedBox(
+          height: 10,
+          child: AnimatedBuilder(
+            animation: _cycle,
+            builder: (context, _) => Row(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                for (var i = 0; i < _dots; i++) ...[
+                  if (i > 0) const SizedBox(width: 6),
+                  Transform.translate(
+                    offset: Offset(0, -3 * _lift(i)),
+                    child: Container(
+                      width: 7,
+                      height: 7,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: Color.lerp(
+                          AppColors.textTertiary,
+                          AppColors.accentInk,
+                          _lift(i),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
         ),
       ),
     );

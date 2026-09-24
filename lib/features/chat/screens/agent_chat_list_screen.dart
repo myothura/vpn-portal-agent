@@ -808,18 +808,13 @@ class _ChatRow extends StatelessWidget {
       ),
     );
 
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Expanded(child: row),
-        // ROW_DIVIDER_V1 — a SizedBox has no colour, so the separator meant to
-        // sit under each row was a 1px blank gap and the rows ran together.
-        const ColoredBox(
-          color: AppColors.border,
-          child: SizedBox(height: 1, width: double.infinity),
-        ),
-      ],
-    );
+    // ROW_DIVIDER_V2 — no line between rows.
+    //
+    // ROW_DIVIDER_V1 turned the 1px blank SizedBox into a real hairline,
+    // because a SizedBox has no colour and the separator was drawing nothing.
+    // The line was not wanted: the avatar column and the row spacing already
+    // separate one conversation from the next.
+    return row;
   }
 }
 

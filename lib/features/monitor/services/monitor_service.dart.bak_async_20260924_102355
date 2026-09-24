@@ -1,0 +1,169 @@
+// lib/features/monitor/services/monitor_service.dart
+import 'package:dio/dio.dart';
+import 'package:vpn_agent_app/core/api/api_client.dart';
+import 'package:vpn_agent_app/core/api/api_config.dart';
+import 'package:vpn_agent_app/features/monitor/models/monitor_snapshot.dart';
+
+/// The outcome of a call, with the failure kept rather than flattened.
+///
+/// Every other list service in this app returns null or an empty list on
+/// error, and five screens consequently tell the agent "nothing here yet" when
+/// the request failed. On a monitoring screen that is worse than useless: an
+/// empty fleet table reads as an outage. So the result carries which of the
+/// two happened, and the screen is forced to choose a different message.
+class MonitorResult<T> {
+  final T? data;
+  final String? error;
+
+  const MonitorResult.ok(this.data) : error = null;
+  const MonitorResult.failed(this.error) : data = null;
+
+  bool get ok => error == null;
+}
+
+class MonitorService {
+  final Dio _dio = ApiClient().dio;
+
+  /// MONITOR_TIMEOUT_V1 — this screen waits longer than the rest of the app.
+  ///
+  /// ApiClient sets receiveTimeout to 15 seconds, which is right for a list of
+  /// users and far too short here: the overall read sends the whole fleet
+  /// snapshot to Gemini and the model thinks before it answers, so the reply
+  /// routinely takes 30 to 60 seconds. Every AI call on this screen was
+  /// failing at 15s with "အဖြေ စောင့်ချိန် ကျော်သွားပါပြီ" — the message was
+  /// accurate and the limit was the bug.
+  ///
+  /// Per-request, not global: nothing else in the app should be allowed to
+  /// hang for two minutes.
+  static final Options _aiOptions = Options(
+    receiveTimeout: const Duration(seconds: 120),
+    sendTimeout: const Duration(seconds: 30),
+  );
+
+  /// The snapshot is several aggregate queries over the session table, which
+  /// is slower than a page of rows but nothing like the model call.
+  static final Options _snapshotOptions = Options(
+    receiveTimeout: const Duration(seconds: 60),
+  );
+
+  Future<MonitorResult<MonitorSnapshot>> snapshot({
+    int hours = 24,
+    int days = 7,
+  }) async {
+    try {
+      final res = await _dio.get(
+        ApiConfig.agentMonitorSnapshot,
+        queryParameters: {'hours': hours, 'days': days},
+        options: _snapshotOptions,
+      );
+
+      final body = res.data;
+      if (res.statusCode == 404) {
+        return const MonitorResult.failed(
+          'ဒီစာမျက်နှာက Main Account အတွက်သာ ဖွင့်ထားပါတယ်။',
+        );
+      }
+      if (body is! Map) {
+        return const MonitorResult.failed('Server ကနေ မမျှော်လင့်တဲ့ အဖြေ ပြန်လာပါတယ်။');
+      }
+      if (body['success'] != true) {
+        return MonitorResult.failed(
+          _str(body['message']) ?? 'Data မရယူနိုင်ပါ။',
+        );
+      }
+
+      final data = body['data'];
+      if (data is! Map) {
+        return const MonitorResult.failed('Data ပုံစံ မမှန်ပါ။');
+      }
+
+      return MonitorResult.ok(
+        MonitorSnapshot.fromJson(data.cast<String, dynamic>()),
+      );
+    } on DioException catch (e) {
+      return MonitorResult.failed(_network(e));
+    } catch (e) {
+      // A parse failure must not read as an empty fleet.
+      return MonitorResult.failed('Data ဖတ်လို့ မရပါ — $e');
+    }
+  }
+
+  /// The fixed overall read. The question lives on the server so this one and
+  /// the admin web page ask exactly the same thing.
+  Future<MonitorResult<String>> overall({int hours = 24}) =>
+      _answer(ApiConfig.agentMonitorOverall, {'hours': hours});
+
+  Future<MonitorResult<String>> ask(
+    String question, {
+    int hours = 24,
+    List<Map<String, String>> history = const [],
+  }) =>
+      _answer(ApiConfig.agentMonitorAsk, {
+        'question': question,
+        'hours': hours,
+        if (history.isNotEmpty) 'history': history,
+      });
+
+  Future<MonitorResult<String>> _answer(
+    String path,
+    Map<String, dynamic> body,
+  ) async {
+    try {
+      final res = await _dio.post(path, data: body, options: _aiOptions);
+
+      if (res.statusCode == 404) {
+        return const MonitorResult.failed(
+          'ဒီစာမျက်နှာက Main Account အတွက်သာ ဖွင့်ထားပါတယ်။',
+        );
+      }
+
+      final data = res.data;
+      if (data is! Map) {
+        return const MonitorResult.failed('Server ကနေ မမျှော်လင့်တဲ့ အဖြေ ပြန်လာပါတယ်။');
+      }
+
+      final answer = _str(data['answer']);
+      if (data['success'] != true) {
+        return MonitorResult.failed(answer ?? 'AI က အဖြေ မပြန်နိုင်ပါ။');
+      }
+      if (answer == null) {
+        return const MonitorResult.failed('အဖြေ ဗလာ ပြန်လာပါတယ်။');
+      }
+
+      return MonitorResult.ok(answer);
+    } on DioException catch (e) {
+      return MonitorResult.failed(_network(e));
+    } catch (e) {
+      return MonitorResult.failed('အဖြေ ဖတ်လို့ မရပါ — $e');
+    }
+  }
+
+  /// Named causes rather than one "network error". The agent can act on
+  /// "လိုင်း မကောင်းပါ" and cannot act on "failed".
+  String _network(DioException e) {
+    final body = e.response?.data;
+    if (body is Map) {
+      final m = _str(body['message']);
+      if (m != null) return m;
+    }
+
+    return switch (e.type) {
+      DioExceptionType.connectionTimeout ||
+      DioExceptionType.sendTimeout =>
+        'Server ကို ဆက်သွယ်လို့ မရပါ — လိုင်း စစ်ကြည့်ပါ။',
+      // The overall read can take most of a minute: the model thinks before it
+      // answers. Saying so stops this being read as the server being down.
+      DioExceptionType.receiveTimeout =>
+        'အဖြေ စောင့်ချိန် ကျော်သွားပါပြီ — AI က ခဏကြာတတ်ပါတယ်၊ ပြန်စမ်းကြည့်ပါ။',
+      DioExceptionType.badResponse =>
+        'Server က ${e.response?.statusCode ?? '-'} ပြန်ပါတယ်။',
+      _ => 'ဆက်သွယ်မှု ပြတ်သွားပါတယ် — ပြန်စမ်းကြည့်ပါ။',
+    };
+  }
+
+  static String? _str(dynamic v) {
+    if (v == null) return null;
+    final s = v.toString().trim();
+    return s.isEmpty ? null : s;
+  }
+}
