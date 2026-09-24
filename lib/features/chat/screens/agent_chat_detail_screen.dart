@@ -316,8 +316,15 @@ class _AgentChatDetailScreenState extends State<AgentChatDetailScreen> {
     );
     if (ok != true) return;
 
-    await _chatService.sendPlanCard(widget.userId);
-    if (mounted) _loadMessages(silent: true);
+    await _runGuarded(() async {
+      final sent = await _chatService.sendPlanCard(widget.userId);
+      if (!mounted) return;
+      if (sent == null) {
+        _toast('Could not send the plan list.');
+        return;
+      }
+      _loadMessages(silent: true);
+    });
   }
 
   Future<void> _openExtendSheet() async {
@@ -332,18 +339,20 @@ class _AgentChatDetailScreenState extends State<AgentChatDetailScreen> {
     );
     if (result == null || !mounted) return;
 
-    final response = await _chatService.extendSubscription(
-      widget.userId,
-      result['months'] as int,
-      result['days'] as int,
-    );
-    if (!mounted) return;
+    await _runGuarded(() async {
+      final response = await _chatService.extendSubscription(
+        widget.userId,
+        result['months'] as int,
+        result['days'] as int,
+      );
+      if (!mounted) return;
 
-    _toast(
-      response?['message']?.toString() ??
-          (response == null ? 'Could not extend.' : 'Subscription extended.'),
-    );
-    _loadMessages(silent: true);
+      _toast(
+        response?['message']?.toString() ??
+            (response == null ? 'Could not extend.' : 'Subscription extended.'),
+      );
+      _loadMessages(silent: true);
+    });
   }
 
   Future<void> _approve(int reqId) async {
@@ -355,10 +364,12 @@ class _AgentChatDetailScreenState extends State<AgentChatDetailScreen> {
     );
     if (ok != true) return;
 
-    final result = await _chatService.approveRequest(reqId);
-    if (!mounted) return;
-    _toast(result['message']?.toString() ?? 'Done.');
-    _loadMessages(silent: true);
+    await _runGuarded(() async {
+      final result = await _chatService.approveRequest(reqId);
+      if (!mounted) return;
+      _toast(result['message']?.toString() ?? 'Done.');
+      _loadMessages(silent: true);
+    });
   }
 
   Future<void> _reject(int reqId) async {
@@ -370,10 +381,47 @@ class _AgentChatDetailScreenState extends State<AgentChatDetailScreen> {
     );
     if (ok != true) return;
 
-    final result = await _chatService.rejectRequest(reqId);
-    if (!mounted) return;
-    _toast(result['message']?.toString() ?? 'Rejected.');
-    _loadMessages(silent: true);
+    await _runGuarded(() async {
+      final result = await _chatService.rejectRequest(reqId);
+      if (!mounted) return;
+      _toast(result['message']?.toString() ?? 'Rejected.');
+      _loadMessages(silent: true);
+    });
+  }
+
+  /// MONEY_SAFETY_V1 — one action at a time, with the screen blocked.
+  ///
+  /// Approve, reject and extend all move credit, and none of them disabled
+  /// anything while they were in flight: a slow network showed no change on
+  /// screen, the agent tapped again, and the second POST went out. The
+  /// barrier stops the tap and says the work is running.
+  bool _actionBusy = false;
+
+  Future<void> _runGuarded(Future<void> Function() action) async {
+    if (_actionBusy) return;
+    _actionBusy = true;
+
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const PopScope(
+        canPop: false,
+        child: Center(
+          child: SizedBox(
+            width: 44,
+            height: 44,
+            child: CircularProgressIndicator(strokeWidth: 3),
+          ),
+        ),
+      ),
+    );
+
+    try {
+      await action();
+    } finally {
+      _actionBusy = false;
+      if (mounted) Navigator.of(context, rootNavigator: true).pop();
+    }
   }
 
   Future<bool?> _confirm({
@@ -557,8 +605,9 @@ class _AgentChatDetailScreenState extends State<AgentChatDetailScreen> {
                           physics: const BouncingScrollPhysics(),
                           itemCount: _messages.length + (_userTyping ? 1 : 0),
                           itemBuilder: (context, i) {
-                            if (i == _messages.length)
+                            if (i == _messages.length) {
                               return const _TypingBubble();
+                            }
                             final msg = _messages[i];
                             final prev = i > 0 ? _messages[i - 1] : null;
                             final next = i + 1 < _messages.length

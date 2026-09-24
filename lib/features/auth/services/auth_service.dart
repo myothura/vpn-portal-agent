@@ -4,6 +4,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vpn_agent_app/core/api/api_client.dart'; // Import ApiClient
 import 'package:vpn_agent_app/core/api/api_config.dart';
 import 'package:vpn_agent_app/core/services/notification_service.dart';
+import 'package:vpn_agent_app/core/utils/app_log.dart';
+import 'package:hive_flutter/hive_flutter.dart';
+import 'package:vpn_agent_app/core/services/agent_realtime_service.dart';
 
 class AuthService {
   static const String _tokenKey = 'access_token';
@@ -95,7 +98,7 @@ class AuthService {
           if (aidInt != null) await prefs.setInt(_agentIdKey, aidInt);
         }
 
-        print("✅ Token saved. Can Send Noti? $canSendNoti");
+        AppLog.d('auth', "✅ Token saved. Can Send Noti? $canSendNoti");
 
         // Token ရပြီဖြစ်တဲ့အတွက် FCM Token ကို Server ပို့ပါမယ်
         await _updateFcmToken();
@@ -104,7 +107,7 @@ class AuthService {
       }
       return false;
     } on DioException catch (e) {
-      print("Login Error: ${e.message}");
+      AppLog.e('auth', "Login Error: ${e.message}");
       return false;
     }
   }
@@ -119,10 +122,10 @@ class AuthService {
           ApiConfig.agentUpdateFcmToken,
           data: {'fcm_token': fcmToken},
         );
-        print("✅ FCM Token updated successfully via ApiClient");
+        AppLog.d('auth', "✅ FCM Token updated successfully via ApiClient");
       }
     } catch (e) {
-      print("Error updating FCM token: $e");
+      AppLog.e('auth', "Error updating FCM token: $e");
       // FCM update မအောင်မြင်လည်း Login process ကို မရပ်တန့်စေပါ
     }
   }
@@ -133,16 +136,38 @@ class AuthService {
       // Token ရှိမှသာ ခေါ်ပါမယ်
       if (await hasToken()) {
         await _authDio.post(ApiConfig.agentLogout);
-        print("✅ Server Logout Successful");
+        AppLog.d('auth', "✅ Server Logout Successful");
       }
     } catch (e) {
       // Server error တက်လည်း ဂရုမစိုက်ဘဲ Local ကကောင်ကို ဆက်ဖျက်မယ်
-      print("Server Logout Warning: $e");
+      AppLog.e('auth', "Server Logout Warning: $e");
     } finally {
       // 2. ဖုန်းထဲက Data တွေကို အပြီးရှင်းမယ်
+      // SESSION_HYGIENE_V1 — everything the previous agent left behind.
+      //
+      // Removing only the token left agent_id cached, and getAgentId()
+      // returns the cached value first — so the next sign-in could keep the
+      // previous agent's identity, including the id == 16 super-admin branch.
+      // The Hive box is worse: it holds profile_data (name, email, credit
+      // balance, every payment method's bank account number) and
+      // dashboard_stats, and ProfileBloc paints that cache before its first
+      // network call. On a shared shop phone the next agent saw it.
       final prefs = await SharedPreferences.getInstance();
       await prefs.remove(_tokenKey);
       await prefs.remove(_permissionKey);
+      await prefs.remove(_agentIdKey);
+
+      try {
+        AgentRealtimeService.instance.stop();
+      } catch (e) {
+        AppLog.e('auth', 'realtime stop on logout: $e');
+      }
+
+      try {
+        if (Hive.isBoxOpen('app_cache')) await Hive.box('app_cache').clear();
+      } catch (e) {
+        AppLog.e('auth', 'cache clear on logout: $e');
+      }
     }
   }
 
@@ -169,7 +194,7 @@ class AuthService {
         return id;
       }
     } catch (e) {
-      print('getAgentId fetch error: $e');
+      AppLog.e('auth', 'getAgentId fetch error: $e');
     }
     return null;
   }

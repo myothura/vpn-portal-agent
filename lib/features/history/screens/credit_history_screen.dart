@@ -93,8 +93,15 @@ class _CreditHistoryScreenState extends State<CreditHistoryScreen> {
   Future<void> _loadMore() async {
     if (_loadingMore || _loading || _page >= _lastPage) return;
     setState(() => _loadingMore = true);
+
+    // PAGE_ROLLBACK_V1 — _page was advanced before the fetch and never put
+    // back. One timed-out page meant the next scroll asked for the page
+    // after it, so a whole page was skipped for the life of the screen
+    // while the footer still read as if the list were complete.
+    final before = _rows.length;
     _page++;
     await _load();
+    if (mounted && _rows.length == before) _page--;
   }
 
   void _onFilterChanged(String? type) {

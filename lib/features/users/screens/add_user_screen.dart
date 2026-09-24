@@ -193,11 +193,15 @@ class _AddUserScreenState extends State<AddUserScreen> {
       // unrelated account.
       if (matches.isEmpty) return false;
 
-      await _userService.assignBusinessPlan(
+      // BUSINESS_RESULT_V1 — assignBusinessPlan does not throw; it returns
+      // {'success': false, 'message': ...}. Discarding that made every
+      // assignment "successful", so an agent could hand a customer a login
+      // with no business-server access and be told the account was created.
+      final result = await _userService.assignBusinessPlan(
         matches.first.id,
         _businessPlan!.id,
       );
-      return true;
+      return result['success'] == true;
     } catch (e) {
       debugPrint('AddUser: business assign failed: $e');
       return false;
@@ -248,8 +252,9 @@ class _AddUserScreenState extends State<AddUserScreen> {
                                     ),
                                     validator: (v) {
                                       final value = v?.trim() ?? '';
-                                      if (value.isEmpty)
+                                      if (value.isEmpty) {
                                         return 'Enter a username';
+                                      }
                                       if (value.length < 3) {
                                         return 'At least 3 characters';
                                       }

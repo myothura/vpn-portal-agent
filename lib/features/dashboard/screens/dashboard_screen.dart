@@ -18,6 +18,7 @@ import 'package:vpn_agent_app/features/dashboard/models/dashboard_model.dart';
 import 'package:vpn_agent_app/features/agent_management/screens/agent_list_screen.dart';
 import 'package:vpn_agent_app/features/history/screens/credit_history_screen.dart';
 import 'package:vpn_agent_app/features/notifications/screens/notification_screen.dart';
+import 'package:vpn_agent_app/features/monitor/screens/connect_monitor_screen.dart';
 import 'package:vpn_agent_app/features/notifications/screens/send_notification_screen.dart';
 import 'package:vpn_agent_app/features/profile/models/payment_method_model.dart';
 import 'package:vpn_agent_app/features/profile/screens/manage_payment_screen.dart';
@@ -938,6 +939,18 @@ class _ActionsGrid extends StatelessWidget {
           color: AppColors.orange,
           wash: AppColors.orangeWash,
           onTap: () => onOpen(const ProfitLossScreen()),
+        ),
+      // CONNECT_MONITOR_V1 — fleet health and the AI read of it. Super admin
+      // only: the page names every server, its capacity and where failures
+      // concentrate, and a reseller could read the shape of other resellers'
+      // traffic from it.
+      if (isSuperAdmin)
+        AppActionTile(
+          label: 'Connect Monitor',
+          icon: Iconsax.search_status,
+          color: AppColors.cyan,
+          wash: AppColors.cyanWash,
+          onTap: () => onOpen(const ConnectMonitorScreen()),
         ),
       if (canManageAgents)
         AppActionTile(

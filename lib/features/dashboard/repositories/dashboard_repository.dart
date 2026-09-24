@@ -1,9 +1,9 @@
-import 'dart:convert';
 import 'package:dio/dio.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:vpn_agent_app/core/api/api_client.dart';
 import 'package:vpn_agent_app/core/api/api_config.dart';
 import 'package:vpn_agent_app/features/dashboard/models/dashboard_model.dart';
+import 'package:vpn_agent_app/core/utils/app_log.dart';
 
 class DashboardRepository {
   final Dio _dio = ApiClient().dio;
@@ -24,7 +24,7 @@ class DashboardRepository {
         return DashboardStats.fromJson(jsonMap);
       }
     } catch (e) {
-      print("Cache Error: $e");
+      AppLog.e('dashboard', "Cache Error: $e");
     }
     return null;
   }

@@ -1,6 +1,7 @@
 import 'package:dio/dio.dart';
 import 'package:vpn_agent_app/core/api/api_client.dart';
 import 'package:vpn_agent_app/features/profile/models/payment_method_model.dart';
+import 'package:vpn_agent_app/core/utils/app_log.dart';
 
 class ProfileService {
   final Dio _dio = ApiClient().dio;
@@ -53,7 +54,7 @@ class ProfileService {
 
       return response.statusCode == 200;
     } on DioException catch (e) {
-      print('Update Payment Error: ${e.response?.data}');
+      AppLog.e('profile', 'Update Payment Error: ${e.response?.data}');
       return false;
     }
   }
@@ -68,7 +69,7 @@ class ProfileService {
       );
       return response.statusCode == 200;
     } on DioException catch (e) {
-      print('Update General Info Error: ${e.response?.data}');
+      AppLog.e('profile', 'Update General Info Error: ${e.response?.data}');
       return false;
     }
   }

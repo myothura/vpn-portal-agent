@@ -2,6 +2,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:vpn_agent_app/core/api/api_client.dart';
 import '../models/notification_model.dart';
+import 'package:vpn_agent_app/core/utils/app_log.dart';
 
 class NotificationListService {
   // ✅ FIX: Use Dio instance from ApiClient (Automatically handles Token & Base URL)
@@ -26,7 +27,7 @@ class NotificationListService {
       }
       return [];
     } catch (e) {
-      print('Error fetching notifications: $e');
+      AppLog.e('notifications', 'Error fetching notifications: $e');
       return [];
     }
   }
@@ -107,7 +108,7 @@ class NotificationListService {
       }
       return [];
     } catch (e) {
-      print("Error fetching users: $e");
+      AppLog.e('notifications', "Error fetching users: $e");
       return [];
     }
   }
@@ -133,7 +134,7 @@ class NotificationListService {
 
       return response.statusCode == 200;
     } catch (e) {
-      print("Error sending notification: $e");
+      AppLog.e('notifications', "Error sending notification: $e");
       return false;
     }
   }

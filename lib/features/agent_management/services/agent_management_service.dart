@@ -1,6 +1,7 @@
 import 'package:dio/dio.dart';
 import 'package:vpn_agent_app/core/api/api_client.dart';
 import 'package:vpn_agent_app/features/agent_management/models/agent_model.dart';
+import 'package:vpn_agent_app/core/utils/app_log.dart';
 
 class AgentManagementService {
   final Dio _dio = ApiClient().dio;
@@ -16,7 +17,7 @@ class AgentManagementService {
       }
       return [];
     } catch (e) {
-      print("Error fetching agents: $e");
+      AppLog.e('agents', "Error fetching agents: $e");
       return [];
     }
   }
@@ -30,7 +31,7 @@ class AgentManagementService {
       }
       return [];
     } catch (e) {
-      print("Error fetching plans: $e");
+      AppLog.e('agents', "Error fetching plans: $e");
       return [];
     }
   }
@@ -41,7 +42,7 @@ class AgentManagementService {
       final response = await _dio.post('/agent/create-agent', data: data);
       return response.statusCode == 201 || response.statusCode == 200;
     } on DioException catch (e) {
-      print("Create Error: ${e.response?.data}");
+      AppLog.e('agents', "Create Error: ${e.response?.data}");
       return false;
     }
   }
@@ -52,7 +53,7 @@ class AgentManagementService {
       final response = await _dio.put('/agent/update-agent/$id', data: data);
       return response.statusCode == 200;
     } on DioException catch (e) {
-      print("Update Error: ${e.response?.data}");
+      AppLog.e('agents', "Update Error: ${e.response?.data}");
       return false;
     }
   }
@@ -63,7 +64,7 @@ class AgentManagementService {
       final response = await _dio.delete('/agent/delete-agent/$id');
       return response.statusCode == 200;
     } catch (e) {
-      print("Delete Error: $e");
+      AppLog.e('agents', "Delete Error: $e");
       return false;
     }
   }

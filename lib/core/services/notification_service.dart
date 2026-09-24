@@ -6,6 +6,7 @@ import 'package:vpn_agent_app/core/api/api_config.dart';
 import 'package:vpn_agent_app/main.dart';
 import 'package:vpn_agent_app/features/chat/screens/agent_chat_detail_screen.dart';
 import 'package:flutter/material.dart';
+import 'package:vpn_agent_app/core/utils/app_log.dart';
 
 class NotificationService {
   static final Dio _dio = ApiClient().dio;
@@ -59,15 +60,15 @@ class NotificationService {
     try {
       final token = await FirebaseMessaging.instance.getToken();
       if (token != null) {
-        print('📱 FCM Token: ${token.substring(0, 30)}...');
+        AppLog.d('fcm', '📱 FCM Token: ${token.substring(0, 30)}...');
         await _dio.post(
           '${ApiConfig.baseUrl}${ApiConfig.agentUpdateFcmToken}',
           data: {'fcm_token': token},
         );
-        print('✅ FCM Token sent to server');
+        AppLog.d('fcm', '✅ FCM Token sent to server');
       }
     } catch (e) {
-      print('❌ FCM token registration failed: $e');
+      AppLog.e('fcm', '❌ FCM token registration failed: $e');
     }
 
     // Listen for token refresh - re-register
@@ -86,7 +87,7 @@ class NotificationService {
     try {
       return await FirebaseMessaging.instance.getToken();
     } catch (e) {
-      print('getFcmToken error: $e');
+      AppLog.e('fcm', 'getFcmToken error: $e');
       return null;
     }
   }

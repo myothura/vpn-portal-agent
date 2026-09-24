@@ -3,6 +3,7 @@ import 'package:dio/dio.dart';
 import 'package:vpn_agent_app/core/api/api_client.dart';
 import 'package:vpn_agent_app/core/api/api_config.dart';
 import 'package:vpn_agent_app/features/dashboard/models/dashboard_model.dart';
+import 'package:vpn_agent_app/core/utils/app_log.dart';
 
 class DashboardService {
   // Use the singleton Dio instance from our central ApiClient
@@ -26,7 +27,7 @@ class DashboardService {
       }
       return null;
     } on DioException catch (e) {
-      print('Failed to get dashboard stats: $e');
+      AppLog.e('dashboard', 'Failed to get dashboard stats: $e');
       return null;
     }
   }

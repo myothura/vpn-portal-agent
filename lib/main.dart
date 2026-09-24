@@ -16,6 +16,7 @@ import 'package:vpn_agent_app/l10n/l10n.dart';
 import 'package:vpn_agent_app/core/theme/app_colors.dart';
 import 'package:vpn_agent_app/core/theme/app_theme.dart';
 import 'package:vpn_agent_app/features/chat/screens/agent_chat_detail_screen.dart';
+import 'package:vpn_agent_app/core/utils/app_log.dart';
 
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
@@ -34,7 +35,7 @@ void main() async {
     await Firebase.initializeApp();
     FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
   } catch (e) {
-    print("Firebase Init Error: $e");
+    AppLog.e('main', "Firebase Init Error: $e");
   }
 
   // Must complete BEFORE runApp: ApiClient is a singleton whose
@@ -87,19 +88,19 @@ class _MyAppState extends State<MyApp> {
 
     // App in foreground - show nothing, chat auto-refreshes
     FirebaseMessaging.onMessage.listen((RemoteMessage message) {
-      print('📩 Foreground message: ${message.data}');
+      AppLog.d('main', '📩 Foreground message: ${message.data}');
     });
 
     // App in background - user taps notification
     FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
-      print('📩 Background tap: ${message.data}');
+      AppLog.d('main', '📩 Background tap: ${message.data}');
       _handleNotificationTap(message.data);
     });
 
     // App was terminated - user taps notification to open
     final initialMessage = await messaging.getInitialMessage();
     if (initialMessage != null) {
-      print('📩 Initial message: ${initialMessage.data}');
+      AppLog.d('main', '📩 Initial message: ${initialMessage.data}');
       // Delay to ensure navigation is ready
       Future.delayed(const Duration(seconds: 2), () {
         _handleNotificationTap(initialMessage.data);

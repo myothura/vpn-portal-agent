@@ -5,6 +5,7 @@ import 'package:vpn_agent_app/core/api/api_config.dart';
 import 'package:vpn_agent_app/features/auth/services/auth_service.dart';
 import 'package:vpn_agent_app/features/auth/screens/login_screen.dart';
 import 'package:vpn_agent_app/main.dart';
+import 'package:vpn_agent_app/core/utils/app_log.dart';
 
 class ApiClient {
   static final ApiClient _instance = ApiClient._internal();
@@ -50,7 +51,7 @@ class ApiClient {
         },
         onResponse: (response, handler) async {
           if (response.statusCode == 401) {
-            if (kDebugMode) print("Token Expired: Auto Logout");
+            if (kDebugMode) AppLog.d('api', "Token Expired: Auto Logout");
             await AuthService().logout();
             navigatorKey.currentState?.pushAndRemoveUntil(
               MaterialPageRoute(builder: (context) => const LoginScreen()),
@@ -140,15 +141,37 @@ class _FallbackInterceptor extends Interceptor {
       return;
     }
 
+    // MONEY_SAFETY_V1 — replaying a write after the connection died can
+    // charge twice: DioExceptionType.unknown includes "delivered, then the
+    // reply was lost". connectionTimeout fires before any byte is sent, so
+    // that one is provably safe to repeat. Reads are always safe.
+    final method = err.requestOptions.method.toUpperCase();
+    final idempotent = method == 'GET' || method == 'HEAD';
+    final neverDelivered = err.type == DioExceptionType.connectionTimeout;
+    final mayReplay = idempotent || neverDelivered;
+
     _inFallback = true;
     try {
       for (final url in targets) {
         debugPrint('FallbackInterceptor: switching to backup: $url');
         _client.updateBaseUrl(url);
+
+        // A write that might already have been applied: the base URL is now
+        // on a reachable host, so the agent's next tap succeeds — but this
+        // one is handed back as a failure for them to decide about.
+        if (!mayReplay) {
+          handler.next(err);
+          return;
+        }
+
         try {
           final options = Options(
             method: err.requestOptions.method,
-            headers: err.requestOptions.headers,
+            // Authorization is re-added by the auth interceptor on the way
+            // out. Carrying the old copy forward only risks sending a token
+            // that has since been rotated.
+            headers: Map<String, dynamic>.from(err.requestOptions.headers)
+              ..remove('Authorization'),
           );
           final response = await _client.dio.request(
             err.requestOptions.path,

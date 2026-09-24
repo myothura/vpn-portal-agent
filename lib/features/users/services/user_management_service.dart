@@ -4,6 +4,7 @@ import 'package:vpn_agent_app/core/api/api_client.dart';
 import 'package:vpn_agent_app/core/api/api_config.dart';
 import 'package:vpn_agent_app/features/users/models/plan_model.dart';
 import 'package:vpn_agent_app/features/users/models/vpn_user_model.dart';
+import 'package:vpn_agent_app/core/utils/app_log.dart';
 
 class UserManagementService {
   final Dio _dio = ApiClient().dio;
@@ -16,7 +17,10 @@ class UserManagementService {
     try {
       String url = '${ApiConfig.baseUrl}${ApiConfig.agentVpnUsers}?page=$page';
       if (search != null && search.isNotEmpty) {
-        url += '&search=$search';
+        // QUERY_ENCODE_V1 — a username containing & # + or a space produced a
+        // malformed query, so an existing user came back as "no match"; the
+        // same hole let extra parameters be appended to the request.
+        url += '&search=${Uri.encodeQueryComponent(search)}';
       }
       if (filter != null && filter.isNotEmpty && filter != 'all') {
         url += '&filter=$filter';
@@ -28,7 +32,7 @@ class UserManagementService {
       }
       return null;
     } on DioException catch (e) {
-      print('Failed to get VPN users: ${e.response?.data}');
+      AppLog.e('users', 'Failed to get VPN users: ${e.response?.data}');
       return null;
     }
   }
@@ -42,7 +46,7 @@ class UserManagementService {
       }
       return [];
     } on DioException catch (e) {
-      print('Failed to load plans: $e');
+      AppLog.e('users', 'Failed to load plans: $e');
       return [];
     }
   }
@@ -64,7 +68,7 @@ class UserManagementService {
       }
       return [];
     } on DioException catch (e) {
-      print('Failed to load business plans: $e');
+      AppLog.e('users', 'Failed to load business plans: $e');
       return [];
     }
   }
@@ -89,7 +93,7 @@ class UserManagementService {
       );
       return response.statusCode == 201;
     } on DioException catch (e) {
-      print('Failed to create user: ${e.response?.data}');
+      AppLog.e('users', 'Failed to create user: ${e.response?.data}');
       return false;
     }
   }
@@ -118,7 +122,7 @@ class UserManagementService {
       );
       return response.statusCode == 200;
     } on DioException catch (e) {
-      print('Failed to update user: ${e.response?.data}');
+      AppLog.e('users', 'Failed to update user: ${e.response?.data}');
       return false;
     }
   }
@@ -205,7 +209,7 @@ class UserManagementService {
       );
       return response.statusCode == 200;
     } on DioException catch (e) {
-      print('Add Slots Error: ${e.response?.data}');
+      AppLog.e('users', 'Add Slots Error: ${e.response?.data}');
       return false;
     }
   }
@@ -218,7 +222,7 @@ class UserManagementService {
       );
       return response.statusCode == 200;
     } on DioException catch (e) {
-      print('Remove Slots Error: ${e.response?.data}');
+      AppLog.e('users', 'Remove Slots Error: ${e.response?.data}');
       return false;
     }
   }
@@ -230,7 +234,7 @@ class UserManagementService {
       );
       return response.statusCode == 200;
     } on DioException catch (e) {
-      print('Failed to delete user: ${e.response?.data}');
+      AppLog.e('users', 'Failed to delete user: ${e.response?.data}');
       return false;
     }
   }

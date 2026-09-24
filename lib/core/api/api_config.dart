@@ -66,4 +66,11 @@ class ApiConfig {
   static const String chatToggleSelfRenewal = "/agent/chat/toggle-self-renewal";
   static String chatExtend(int userId) => "/agent/chat/extend/$userId";
   static const String chatBroadcast = "/agent/chat/broadcast";
+
+  // CONNECT_MONITOR_V1 — super-admin only. These sit under auth:sanctum in
+  // routes/api.php; the admin web page reaches the same two services through
+  // its own session-authenticated routes.
+  static const String agentMonitorSnapshot = "/agent/monitor/snapshot";
+  static const String agentMonitorOverall = "/agent/monitor/overall";
+  static const String agentMonitorAsk = "/agent/monitor/ask";
 }

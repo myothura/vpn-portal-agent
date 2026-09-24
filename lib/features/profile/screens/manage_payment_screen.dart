@@ -183,9 +183,11 @@ class _ManagePaymentScreenState extends State<ManagePaymentScreen> {
       canPop: !_dirty,
       onPopInvokedWithResult: (didPop, _) async {
         if (didPop) return;
-        if (await _confirmDiscard() && mounted) {
-          Navigator.of(context).pop();
-        }
+        // ANALYZER_CLEAN_V1 — the await and the context use are
+        // separate statements, so the guard covers the gap.
+        final discard = await _confirmDiscard();
+        if (!discard || !context.mounted) return;
+        Navigator.of(context).pop();
       },
       child: Scaffold(
         backgroundColor: AppColors.background,

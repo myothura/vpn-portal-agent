@@ -2,6 +2,7 @@ import 'package:dio/dio.dart';
 import 'package:vpn_agent_app/core/api/api_client.dart'; // Import ApiClient
 import 'package:vpn_agent_app/core/api/api_config.dart';
 import 'package:vpn_agent_app/features/history/models/renewal_request_model.dart';
+import 'package:vpn_agent_app/core/utils/app_log.dart';
 
 class RenewalRequestService {
   // ⭐️ ApiClient ရဲ့ dio ကို ယူသုံးပါ (Token Auto ပါပြီးသား ဖြစ်မယ်)
@@ -31,7 +32,7 @@ class RenewalRequestService {
       }
       return null;
     } catch (e) {
-      print('Failed to get renewal requests: $e');
+      AppLog.e('renewal', 'Failed to get renewal requests: $e');
       return null;
     }
   }
@@ -44,7 +45,7 @@ class RenewalRequestService {
       );
       return response.statusCode == 200;
     } catch (e) {
-      print('Failed to approve request: $e');
+      AppLog.e('renewal', 'Failed to approve request: $e');
       return false;
     }
   }
@@ -54,11 +55,14 @@ class RenewalRequestService {
       // Reject Endpoint တည်ဆောက်ပုံ
       final response = await _dio.post(
         '${ApiConfig.agentRenewalRequests}/$requestId/reject',
-        data: {'reason': reason},
+        // REJECT_KEY_V1 — the chat path sends rejection_reason and this one
+        // sends reason. Only one can match the server's validator; sending
+        // both means the agent's words survive whichever it is.
+        data: {'reason': reason, 'rejection_reason': reason},
       );
       return response.statusCode == 200;
     } catch (e) {
-      print('Failed to reject request: $e');
+      AppLog.e('renewal', 'Failed to reject request: $e');
       return false;
     }
   }

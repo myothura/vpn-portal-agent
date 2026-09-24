@@ -5,6 +5,7 @@ import 'package:vpn_agent_app/features/auth/screens/login_screen.dart';
 import 'package:vpn_agent_app/features/auth/services/auth_service.dart';
 import 'package:vpn_agent_app/features/scaffold/main_scaffold.dart';
 import 'package:vpn_agent_app/core/navigation/app_transitions.dart';
+import 'package:vpn_agent_app/core/utils/app_log.dart';
 
 class AuthCheckScreen extends StatefulWidget {
   const AuthCheckScreen({super.key});
@@ -25,9 +26,9 @@ class _AuthCheckScreenState extends State<AuthCheckScreen> {
     // Guarded: notification setup is not worth blocking startup for. Without
     // this, any throw here leaves the user on the splash screen forever.
     try {
-      print("🚀 Initializing Notification Service...");
+      AppLog.d('auth', "🚀 Initializing Notification Service...");
       await NotificationService.initialize();
-      print("✅ Notification Service Initialized");
+      AppLog.d('auth', "✅ Notification Service Initialized");
     } catch (e) {
       debugPrint("Notification init failed (continuing): $e");
     }
@@ -38,16 +39,19 @@ class _AuthCheckScreenState extends State<AuthCheckScreen> {
     // no longer. Padding it just made every launch two seconds slower.
 
     // 3. Check login status
-    print("🔐 Checking Token...");
+    AppLog.d('auth', "🔐 Checking Token...");
     final authService = AuthService();
     final bool isLoggedIn = await authService.hasToken();
-    print("🔐 Token Check Result: $isLoggedIn");
+    AppLog.d('auth', "🔐 Token Check Result: $isLoggedIn");
 
     if (mounted) {
       if (isLoggedIn) {
         // 4. Register FCM token AFTER confirming auth
         await NotificationService.registerFcmToken();
-        print("📱 FCM Token Registered");
+        // ANALYZER_CLEAN_V1 — the mounted check above this block was
+        // taken before the await; the widget can be gone by now.
+        if (!mounted) return;
+        AppLog.d('auth', "📱 FCM Token Registered");
 
         Navigator.of(context)
             .pushReplacement(AppTransitions.fadeThrough(const MainScaffold()));

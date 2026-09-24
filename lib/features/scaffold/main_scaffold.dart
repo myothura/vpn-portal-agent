@@ -341,14 +341,26 @@ class _NavBar extends StatelessWidget {
         final counts = _counts(state);
 
         return Container(
-          decoration: const BoxDecoration(
+          // NAVBAR_V2 — a soft upward shadow instead of a hairline. The line
+          // read as a table rule; the shadow separates the bar from a
+          // scrolling list without drawing a second edge. This is a drop
+          // shadow, not a BackdropFilter: it costs one blurred rect at paint
+          // time and nothing per scroll frame.
+          decoration: BoxDecoration(
             color: AppColors.surface,
-            border: Border(top: BorderSide(color: AppColors.border)),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.07),
+                blurRadius: 18,
+                offset: const Offset(0, -3),
+              ),
+            ],
           ),
           child: SafeArea(
             top: false,
             child: SizedBox(
-              height: 60,
+              // Room for the pill behind the selected icon.
+              height: 66,
               child: Row(
                 children: [
                   for (var i = 0; i < items.length; i++)
@@ -402,57 +414,86 @@ class _NavButton extends StatelessWidget {
 
     return InkWell(
       onTap: onTap,
-      // No ripple splash across the whole bar segment; the colour and weight
-      // change is the feedback.
+      // No ripple splash across the whole bar segment; the pill and the
+      // colour change are the feedback, and a splash the width of a quarter
+      // of the screen reads as a mistake rather than a tap.
       splashFactory: NoSplash.splashFactory,
       highlightColor: Colors.transparent,
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Stack(
-            clipBehavior: Clip.none,
-            children: [
-              Icon(
-                selected ? item.activeIcon : item.icon,
-                size: 22,
-                color: color,
-              ),
-              if (count > 0)
-                Positioned(
-                  top: -5,
-                  left: 13,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 5,
-                      vertical: 1,
-                    ),
-                    constraints: const BoxConstraints(minWidth: 18),
-                    decoration: BoxDecoration(
-                      color: AppColors.danger,
-                      borderRadius: BorderRadius.circular(999),
-                      border: Border.all(color: AppColors.surface, width: 1.5),
-                    ),
-                    child: Text(
-                      count > 99 ? '99+' : '$count',
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(
-                        color: AppColors.textOnAccent,
-                        fontSize: 10,
-                        fontWeight: FontWeight.w800,
-                        height: 1.4,
+          // NAVBAR_V2 — the pill. It animates its fill and its width, so
+          // moving between tabs reads as one mark sliding rather than two
+          // icons changing colour at the same instant.
+          AnimatedContainer(
+            duration: const Duration(milliseconds: 180),
+            curve: Curves.easeOutCubic,
+            padding: EdgeInsets.symmetric(
+              horizontal: selected ? 20 : 12,
+              vertical: 6,
+            ),
+            decoration: BoxDecoration(
+              color: selected ? AppColors.accentWash : Colors.transparent,
+              borderRadius: BorderRadius.circular(999),
+            ),
+            child: Stack(
+              clipBehavior: Clip.none,
+              children: [
+                Icon(
+                  selected ? item.activeIcon : item.icon,
+                  size: 22,
+                  color: color,
+                ),
+                if (count > 0)
+                  Positioned(
+                    top: -6,
+                    left: 12,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 5,
+                        vertical: 1,
+                      ),
+                      constraints: const BoxConstraints(minWidth: 18),
+                      decoration: BoxDecoration(
+                        color: AppColors.danger,
+                        borderRadius: BorderRadius.circular(999),
+                        // The ring is drawn in the surface colour, not the
+                        // pill's, so the badge reads the same whether the tab
+                        // is selected or not.
+                        border: Border.all(
+                          color: AppColors.surface,
+                          width: 1.5,
+                        ),
+                      ),
+                      child: Text(
+                        count > 99 ? '99+' : '$count',
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          color: AppColors.textOnAccent,
+                          fontSize: 10,
+                          fontWeight: FontWeight.w800,
+                          height: 1.4,
+                        ),
                       ),
                     ),
                   ),
-                ),
-            ],
+              ],
+            ),
           ),
-          const SizedBox(height: 4),
-          Text(
-            item.label,
+          const SizedBox(height: 3),
+          AnimatedDefaultTextStyle(
+            duration: const Duration(milliseconds: 180),
+            curve: Curves.easeOutCubic,
             style: TextStyle(
               fontSize: 11,
               fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
               color: color,
+              height: 1.2,
+            ),
+            child: Text(
+              item.label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
             ),
           ),
         ],

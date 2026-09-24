@@ -282,8 +282,15 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
   Future<void> _loadMore() async {
     if (_isLoadingMore || _isLoading || _page >= _lastPage) return;
     setState(() => _isLoadingMore = true);
+
+    // PAGE_ROLLBACK_V1 — _page was advanced before the fetch and never put
+    // back. One timed-out page meant the next scroll asked for the page
+    // after it, so a whole page was skipped for the life of the screen
+    // while the footer still read as if the list were complete.
+    final before = _users.length;
     _page++;
     await _load();
+    if (mounted && _users.length == before) _page--;
   }
 
   Future<void> _openUser(VpnUser user) async {

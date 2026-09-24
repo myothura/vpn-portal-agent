@@ -10,6 +10,7 @@ import 'package:vpn_agent_app/shared_widgets/ui/app_surface.dart';
 import 'package:vpn_agent_app/features/agent_management/models/agent_model.dart';
 import 'package:vpn_agent_app/features/agent_management/services/agent_management_service.dart';
 import 'package:vpn_agent_app/features/profile/services/profile_service.dart';
+import 'package:vpn_agent_app/core/utils/app_log.dart';
 
 class CreateEditAgentScreen extends StatefulWidget {
   final AgentModel? agent;
@@ -82,13 +83,28 @@ class _CreateEditAgentScreenState extends State<CreateEditAgentScreen> {
     if (mounted) setState(() {});
   }
 
+  /// ADMIN_STATUS_V1 — false and "not known yet" are different states.
+  ///
+  /// _isAdmin starts false and the profile fetch swallowed its own failure,
+  /// so a timeout left it false — and _submit gates can_send_notifications,
+  /// can_access_chat, can_manage_agents and topup_bonus_percent behind it.
+  /// The bonus decides what cash converts to credit, and it was vanishing
+  /// from the payload with an "Agent updated." toast over the top.
+  bool _adminKnown = false;
+
   Future<void> _loadAdminStatus() async {
     try {
       final profile = await ProfileService().getProfile();
       if (profile != null && mounted) {
-        setState(() => _isAdmin = profile['id'] == 16);
+        setState(() {
+          _isAdmin = profile['id'] == 16;
+          _adminKnown = true;
+        });
       }
-    } catch (_) {}
+    } catch (e) {
+      AppLog.e('agents', 'admin status: $e');
+      if (mounted) setState(() => _adminKnown = false);
+    }
   }
 
   Future<void> _loadPlans() async {
@@ -107,6 +123,16 @@ class _CreateEditAgentScreenState extends State<CreateEditAgentScreen> {
 
     if (_selectedPlanIds.isEmpty) {
       _toast('Choose at least one plan for this agent to sell.');
+      return;
+    }
+
+    // ADMIN_GATE_V1 — _isAdmin decides whether the permission switches and
+    // topup_bonus_percent go into the payload. If the profile call never
+    // landed, saving now would drop them without saying so, so the save is
+    // refused and the status is fetched again.
+    if (!_adminKnown) {
+      _toast('Could not confirm your account level. Try again in a moment.');
+      _loadAdminStatus();
       return;
     }
 

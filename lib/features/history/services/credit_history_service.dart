@@ -2,6 +2,7 @@ import 'package:dio/dio.dart';
 import 'package:vpn_agent_app/core/api/api_client.dart'; // Import ApiClient
 import 'package:vpn_agent_app/core/api/api_config.dart';
 import 'package:vpn_agent_app/features/history/models/credit_history_model.dart';
+import 'package:vpn_agent_app/core/utils/app_log.dart';
 
 class CreditHistoryService {
   // ⭐️ ApiClient ရဲ့ dio ကို ယူသုံးပါ (Token Auto ပါသွားပါလိမ့်မယ်)
@@ -29,7 +30,7 @@ class CreditHistoryService {
       return null;
     } catch (e) {
       // Error တက်ရင် Log ထုတ်ကြည့်မယ်
-      print('Failed to get credit history: $e');
+      AppLog.e('credit', 'Failed to get credit history: $e');
       return null;
     }
   }

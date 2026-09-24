@@ -150,6 +150,8 @@ class _SendNotificationScreenState extends State<SendNotificationScreen> {
       if (ok != true) return;
     }
 
+    // ANALYZER_CLEAN_V1 — the confirm dialog was awaited above.
+    if (!mounted) return;
     FocusScope.of(context).unfocus();
     HapticFeedback.mediumImpact();
     setState(() => _sending = true);

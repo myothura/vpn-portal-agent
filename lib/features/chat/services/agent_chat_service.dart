@@ -10,7 +10,10 @@ class AgentChatService {
     try {
       String url = '${ApiConfig.baseUrl}${ApiConfig.chatUsers}?page=$page';
       if (search != null && search.isNotEmpty) {
-        url += '&search=$search';
+        // QUERY_ENCODE_V1 — a username containing & # + or a space produced a
+        // malformed query, so an existing user came back as "no match"; the
+        // same hole let extra parameters be appended to the request.
+        url += '&search=${Uri.encodeQueryComponent(search)}';
       }
       final response = await _dio.get(url);
       if (response.statusCode == 200) {
@@ -171,7 +174,8 @@ class AgentChatService {
     try {
       final response = await _dio.post(
         '${ApiConfig.baseUrl}${ApiConfig.agentRenewalRequests}/$requestId/reject',
-        data: {'rejection_reason': reason ?? ''},
+        // REJECT_KEY_V1 — see RenewalRequestService.rejectRequest.
+        data: {'rejection_reason': reason ?? '', 'reason': reason ?? ''},
       );
       if (response.statusCode == 200) {
         return {
