@@ -7,6 +7,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:vpn_agent_app/core/services/agent_realtime_service.dart';
 import 'package:vpn_agent_app/core/theme/app_colors.dart';
 import 'package:vpn_agent_app/core/utils/app_log.dart';
+import 'package:vpn_agent_app/core/utils/app_time.dart';
 import 'package:vpn_agent_app/core/utils/formatters.dart';
 import 'package:vpn_agent_app/core/widgets/confirm_dialog.dart';
 import 'package:vpn_agent_app/features/scaffold/main_scaffold.dart';
@@ -868,7 +869,8 @@ class _RequestCard extends StatelessWidget {
   }
 
   static String _formatDate(String raw) {
-    final parsed = DateTime.tryParse(raw);
+    // AGENT_APP_Q1_RR_STAMP
+    final parsed = AppTime.parse(raw);
     if (parsed == null) return raw;
     return Fmt.dateTime.format(parsed.toLocal());
   }

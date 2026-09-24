@@ -6,6 +6,7 @@ import 'package:intl/intl.dart';
 import 'package:vpn_agent_app/core/theme/app_colors.dart';
 import 'package:vpn_agent_app/core/theme/app_theme.dart';
 import 'package:vpn_agent_app/core/utils/formatters.dart';
+import 'package:vpn_agent_app/core/utils/app_time.dart';
 import 'package:vpn_agent_app/shared_widgets/ui/app_surface.dart';
 
 import 'package:vpn_agent_app/features/profit_loss/models/profit_loss_model.dart';
@@ -1255,7 +1256,9 @@ class _SaleRow extends StatelessWidget {
   static final DateFormat _stamp = DateFormat('dd MMM, h:mm a');
 
   static String _date(String raw) {
-    final parsed = DateTime.tryParse(raw);
+    // AGENT_APP_Q1_PL_STAMP — the month label above is a bare date and
+    // is deliberately not routed through AppTime; this one is a moment.
+    final parsed = AppTime.parse(raw);
     if (parsed == null) return raw;
     return _stamp.format(parsed.toLocal());
   }

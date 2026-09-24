@@ -11,6 +11,7 @@ import 'package:vpn_agent_app/core/services/agent_realtime_service.dart';
 import 'package:vpn_agent_app/core/theme/app_colors.dart';
 import 'package:vpn_agent_app/core/theme/app_theme.dart';
 import 'package:vpn_agent_app/core/utils/app_log.dart';
+import 'package:vpn_agent_app/core/utils/app_time.dart';
 import 'package:vpn_agent_app/core/utils/formatters.dart';
 import 'package:vpn_agent_app/core/widgets/confirm_dialog.dart';
 import 'package:vpn_agent_app/shared_widgets/ui/app_surface.dart';
@@ -855,17 +856,20 @@ class _AgentChatDetailScreenState extends State<AgentChatDetailScreen> {
         (msg['type'] ?? 'text') != 'text') {
       return true;
     }
-    final a = DateTime.tryParse((prev['created_at'] ?? '').toString());
-    final b = DateTime.tryParse((msg['created_at'] ?? '').toString());
+    // AGENT_APP_Q1_CD_GROUP — the gap between two messages, in real time.
+    final a = AppTime.parse(prev['created_at']);
+    final b = AppTime.parse(msg['created_at']);
     if (a == null || b == null) return true;
     return b.difference(a).inMinutes.abs() > 5;
   }
 
   static bool _isNewDay(Map<String, dynamic>? prev, Map<String, dynamic> msg) {
-    final current = DateTime.tryParse((msg['created_at'] ?? '').toString());
+    // AGENT_APP_Q1_CD_DAY — which calendar day, in the reader's zone.
+    final current = AppTime.parse(msg['created_at']);
     if (current == null) return false;
     if (prev == null) return true;
-    final previous = DateTime.tryParse((prev['created_at'] ?? '').toString());
+    // AGENT_APP_Q1_CD_DAYPREV
+    final previous = AppTime.parse(prev['created_at']);
     if (previous == null) return true;
     return current.day != previous.day ||
         current.month != previous.month ||
@@ -874,7 +878,9 @@ class _AgentChatDetailScreenState extends State<AgentChatDetailScreen> {
 
   static String _lastSeen(String? raw) {
     if (raw == null || raw.isEmpty) return 'Offline';
-    final parsed = DateTime.tryParse(raw);
+    // AGENT_APP_Q1_CD_SEEN — this feeds a difference against now(), so
+    // an unconverted UTC value read as 6h30m staler than it was.
+    final parsed = AppTime.parse(raw);
     if (parsed == null) return 'Offline';
     final diff = DateTime.now().difference(parsed);
     if (diff.inMinutes < 60) return 'Last seen ${diff.inMinutes}m ago';
@@ -1156,7 +1162,8 @@ class _DaySeparator extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final parsed = DateTime.tryParse(raw);
+    // AGENT_APP_Q1_CD_SEP — the date on the day divider.
+    final parsed = AppTime.parse(raw);
     if (parsed == null) return const SizedBox.shrink();
 
     final now = DateTime.now();
@@ -1419,7 +1426,9 @@ class _TextBubble extends StatelessWidget {
   }
 
   static String _time(String raw) {
-    final parsed = DateTime.tryParse(raw);
+    // AGENT_APP_Q1_CD_CLOCK — the clock under each bubble. This is the
+    // one the screenshot showed: 8:44 AM for a message sent at 15:14.
+    final parsed = AppTime.parse(raw);
     if (parsed == null) return '';
     // Called once per bubble, per frame, on threads that run to hundreds.
     return Fmt.time.format(parsed.toLocal());

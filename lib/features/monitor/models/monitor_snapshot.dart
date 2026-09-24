@@ -10,6 +10,8 @@
 // fleet, so nothing here casts, and a malformed row is dropped rather than
 // allowed to throw.
 
+import 'package:vpn_agent_app/core/utils/app_time.dart';
+
 int _int(dynamic v) {
   if (v is int) return v;
   if (v is num) return v.round();
@@ -88,7 +90,8 @@ class MonitorSnapshot {
     }
 
     return MonitorSnapshot(
-      generatedAt: DateTime.tryParse(_str(j['generated_at'], ''))?.toLocal(),
+      // AGENT_APP_Q1_MS — the snapshot's own clock.
+      generatedAt: AppTime.parse(j['generated_at']),
       windowHours: _int(j['window_hours']),
       compareDays: _int(j['compare_days']),
       overview: Overview.fromJson(

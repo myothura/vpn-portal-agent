@@ -9,6 +9,7 @@ import 'package:vpn_agent_app/shared_widgets/ui/app_surface.dart';
 // C_LISTS_CH_IMPORTS — intl is gone: two NumberFormats and a DateFormat, all
 // three built inside a build() or a row builder, now point at Fmt.
 import '../../../core/utils/formatters.dart';
+import '../../../core/utils/app_time.dart';
 
 import 'package:vpn_agent_app/features/history/models/credit_history_model.dart';
 import 'package:vpn_agent_app/features/history/services/credit_history_service.dart';
@@ -488,7 +489,8 @@ class _TransactionRow extends StatelessWidget {
   }
 
   static String _formatDate(String raw) {
-    final parsed = DateTime.tryParse(raw);
+    // AGENT_APP_Q1_CH_STAMP
+    final parsed = AppTime.parse(raw);
     if (parsed == null) return raw;
 
     final local = parsed.toLocal();

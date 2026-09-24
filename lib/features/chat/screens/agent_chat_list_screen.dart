@@ -8,6 +8,7 @@ import 'package:vpn_agent_app/core/navigation/app_transitions.dart';
 import 'package:vpn_agent_app/core/services/agent_realtime_service.dart';
 import 'package:vpn_agent_app/core/theme/app_colors.dart';
 import 'package:vpn_agent_app/core/theme/app_theme.dart';
+import 'package:vpn_agent_app/core/utils/app_time.dart';
 import 'package:vpn_agent_app/core/widgets/confirm_dialog.dart';
 import 'package:vpn_agent_app/shared_widgets/ui/app_surface.dart';
 
@@ -642,7 +643,9 @@ class _ChatRow extends StatelessWidget {
 
   static String _timeAgo(String raw) {
     if (raw.isEmpty) return '';
-    final parsed = DateTime.tryParse(raw);
+    // AGENT_APP_Q1_CL_AGO — every thread read 6h30m older than it was,
+    // so a message from a minute ago showed as 6h.
+    final parsed = AppTime.parse(raw);
     if (parsed == null) return '';
     final diff = DateTime.now().difference(parsed);
     if (diff.inMinutes < 1) return 'now';

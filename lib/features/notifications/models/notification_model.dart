@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'package:vpn_agent_app/core/utils/app_time.dart';
+
 class NotificationModel {
   final String id;
   final String title;
@@ -29,12 +31,9 @@ class NotificationModel {
       id: json['id']?.toString() ?? '0',
       title: json['title']?.toString() ?? 'No Title',
       body: json['body']?.toString() ?? '',
-      readAt: json['read_at'] != null
-          ? DateTime.tryParse(json['read_at'].toString())
-          : null,
-      createdAt: json['created_at'] != null
-          ? (DateTime.tryParse(json['created_at'].toString()) ?? DateTime.now())
-          : DateTime.now(),
+      // AGENT_APP_Q1_NM — both are moments, both arrived unconverted.
+      readAt: AppTime.parse(json['read_at']),
+      createdAt: AppTime.parse(json['created_at']) ?? DateTime.now(),
       // The column is json, but Laravel hands it back as a string on a raw
       // DB::table query and as a Map through the model — both shapes occur.
       screen: _screenFrom(json['data']),
