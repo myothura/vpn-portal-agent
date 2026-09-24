@@ -4,10 +4,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:iconsax/iconsax.dart';
-import 'package:intl/intl.dart';
 
 import 'package:vpn_agent_app/core/theme/app_colors.dart';
 import 'package:vpn_agent_app/core/theme/app_theme.dart';
+import 'package:vpn_agent_app/core/utils/formatters.dart';
 import 'package:vpn_agent_app/shared_widgets/ui/app_surface.dart';
 import 'package:vpn_agent_app/shared_widgets/theme_helpers.dart';
 import 'package:vpn_agent_app/shared_widgets/ui/app_tiles.dart';
@@ -41,6 +41,25 @@ class DashboardScreen extends StatelessWidget {
     return const _DashboardView();
   }
 }
+
+/// The figures this screen draws, whichever state is carrying them.
+///
+/// Lifted out of build() so buildWhen and the builder read the same thing. A
+/// buildWhen that compares a field the builder does not use is how this kind
+/// of optimisation ends up suppressing a rebuild the page needed.
+DashboardStats? _statsOf(DashboardState state) => switch (state) {
+  DashboardLoaded s => s.stats,
+  DashboardLoading s => s.cachedStats,
+  DashboardError s => s.cachedStats,
+  _ => null,
+};
+
+/// Whether those figures are known to be current.
+bool _staleOf(DashboardState state) => switch (state) {
+  DashboardLoaded s => s.isStale,
+  DashboardError _ => true,
+  _ => false,
+};
 
 class _DashboardView extends StatefulWidget {
   const _DashboardView();
@@ -151,21 +170,23 @@ class _DashboardViewState extends State<_DashboardView> {
       body: SafeArea(
         bottom: false,
         child: BlocBuilder<DashboardBloc, DashboardState>(
+          // BUILDWHEN_D — DashboardLoaded stamps fetchedAt with DateTime.now()
+          // in its constructor, so no two states are ever equal however
+          // identical the numbers, and every 30s poll rebuilt the whole page:
+          // header, ticker, balance card, eight tiles, entrance wrappers and
+          // all. The three comparisons below are everything this builder
+          // reads — DashboardStats is Equatable, so the last one is a value
+          // comparison and a genuine change still rebuilds.
+          buildWhen: (prev, next) =>
+              prev.runtimeType != next.runtimeType ||
+              _staleOf(prev) != _staleOf(next) ||
+              _statsOf(prev) != _statsOf(next),
           builder: (context, state) {
-            final stats = switch (state) {
-              DashboardLoaded s => s.stats,
-              DashboardLoading s => s.cachedStats,
-              DashboardError s => s.cachedStats,
-              _ => null,
-            };
+            final stats = _statsOf(state);
 
             // Anything not freshly fetched is flagged: cache on cold start, a
             // failed background poll, or an error we are riding out on cache.
-            final isStale = switch (state) {
-              DashboardLoaded s => s.isStale,
-              DashboardError _ => true,
-              _ => false,
-            };
+            final isStale = _staleOf(state);
 
             // Only a cold start with nothing cached is a blocking state.
             if (stats == null) {
@@ -279,35 +300,55 @@ class _DashboardBackdrop extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final media = MediaQuery.of(context);
+
     // Starts under the status bar rather than under SafeArea, so the artwork
     // reaches up level with the notification and profile buttons instead of
     // beginning below them.
-    final topInset = MediaQuery.of(context).padding.top;
+    final topInset = media.padding.top;
 
-    return IgnorePointer(
-      child: Padding(
-        padding: EdgeInsets.only(top: topInset),
-        child: Align(
-          alignment: Alignment.topCenter,
-          child: ShaderMask(
-            shaderCallback: (rect) => const LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              // A long, even ramp to nothing. A short one ended in a visible
-              // horizontal edge partway down the artwork, which read as the
-              // image being cut off rather than fading out.
-              stops: [0.0, 0.35, 1.0],
-              colors: [Colors.black, Colors.black87, Colors.transparent],
-            ).createShader(rect),
-            blendMode: BlendMode.dstIn,
-            child: Opacity(
-              opacity: 0.55,
-              child: Image.asset(
-                'assets/images/dashboard_hero.png',
-                width: double.infinity,
-                // contain: the whole artwork, scaled to the width. cover
-                // cropped it to a fixed band and cut through the cards.
-                fit: BoxFit.contain,
+    // HERO_CACHE_D — the asset is authored well above screen width, and
+    // without cacheWidth the engine decodes every pixel of it into memory and
+    // then scales the result down to paint it. This decodes it at the device
+    // width it is actually drawn at, rounded up to a multiple of 64 so a
+    // rotation or a split-screen resize lands on the same cache key instead
+    // of decoding a second copy.
+    final heroPixelWidth = (media.size.width * media.devicePixelRatio).ceil();
+    final heroCacheWidth = heroPixelWidth < 64
+        ? 64
+        : ((heroPixelWidth + 63) ~/ 64) * 64;
+
+    // RepaintBoundary: this sits behind a scrolling ListView inside a Stack,
+    // and the ShaderMask below is a saveLayer. Without its own layer the
+    // masked image was re-composited on every scroll frame and on every step
+    // of the entrance animation running above it.
+    return RepaintBoundary(
+      child: IgnorePointer(
+        child: Padding(
+          padding: EdgeInsets.only(top: topInset),
+          child: Align(
+            alignment: Alignment.topCenter,
+            child: ShaderMask(
+              shaderCallback: (rect) => const LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                // A long, even ramp to nothing. A short one ended in a visible
+                // horizontal edge partway down the artwork, which read as the
+                // image being cut off rather than fading out.
+                stops: [0.0, 0.35, 1.0],
+                colors: [Colors.black, Colors.black87, Colors.transparent],
+              ).createShader(rect),
+              blendMode: BlendMode.dstIn,
+              child: Opacity(
+                opacity: 0.55,
+                child: Image.asset(
+                  'assets/images/dashboard_hero.png',
+                  width: double.infinity,
+                  cacheWidth: heroCacheWidth,
+                  // contain: the whole artwork, scaled to the width. cover
+                  // cropped it to a fixed band and cut through the cards.
+                  fit: BoxFit.contain,
+                ),
               ),
             ),
           ),
@@ -580,14 +621,32 @@ class _RequestTicker extends StatefulWidget {
   State<_RequestTicker> createState() => _RequestTickerState();
 }
 
-class _RequestTickerState extends State<_RequestTicker> {
+class _RequestTickerState extends State<_RequestTicker>
+    with WidgetsBindingObserver {
   int _index = 0;
   Timer? _timer;
 
   @override
   void initState() {
     super.initState();
+    // TICKER_LIFECYCLE_D — a 4-second setState that kept firing while the app
+    // was backgrounded: a rebuild every four seconds for a banner nobody
+    // could see, until the OS got round to killing the process.
+    WidgetsBinding.instance.addObserver(this);
     _restartTimer();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    if (state == AppLifecycleState.resumed) {
+      // _restartTimer cancels first and bails out when there is nothing to
+      // rotate through, so this is safe to call on every resume.
+      _restartTimer();
+    } else {
+      _timer?.cancel();
+      _timer = null;
+    }
   }
 
   @override
@@ -610,6 +669,7 @@ class _RequestTickerState extends State<_RequestTicker> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _timer?.cancel();
     super.dispose();
   }
@@ -775,7 +835,11 @@ class _BalanceCardState extends State<_BalanceCard> {
                           )
                         : AppAnimatedNumber(
                             value: stats.creditBalance,
-                            format: (n) => NumberFormat('#,##0').format(n),
+                            // Fmt.money rather than a NumberFormat built
+                            // here: this closure runs once per frame for the
+                            // whole 650ms count-up, so it was constructing
+                            // roughly forty formatters per change.
+                            format: Fmt.money.format,
                             style: t.displaySmall?.copyWith(
                               color: AppColors.textOnInk,
                               fontSize: 34,

@@ -5,12 +5,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:iconsax/iconsax.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:intl/intl.dart';
 
 import 'package:vpn_agent_app/core/api/api_config.dart';
 import 'package:vpn_agent_app/core/services/agent_realtime_service.dart';
 import 'package:vpn_agent_app/core/theme/app_colors.dart';
 import 'package:vpn_agent_app/core/theme/app_theme.dart';
+import 'package:vpn_agent_app/core/utils/app_log.dart';
+import 'package:vpn_agent_app/core/utils/formatters.dart';
+import 'package:vpn_agent_app/core/widgets/confirm_dialog.dart';
 import 'package:vpn_agent_app/shared_widgets/ui/app_surface.dart';
 
 import 'package:vpn_agent_app/features/chat/services/agent_chat_service.dart';
@@ -40,6 +42,10 @@ class _AgentChatDetailScreenState extends State<AgentChatDetailScreen> {
   File? _selectedImage;
 
   bool _loading = true;
+
+  /// HISTORY_FAILURE_STATE_V1 — the history request came back with nothing
+  /// and the thread is empty. Not the same as a conversation not yet started.
+  bool _failed = false;
   bool _showJumpToLatest = false;
   double _lastKeyboardInset = 0;
 
@@ -196,12 +202,19 @@ class _AgentChatDetailScreenState extends State<AgentChatDetailScreen> {
     if (!mounted) return;
 
     if (result == null) {
-      setState(() => _loading = false);
+      // A silent reload that fails leaves the thread alone; only an empty
+      // screen reports it, and then with a retry rather than "no messages
+      // yet", which reads as a conversation nobody has started.
+      setState(() {
+        _failed = _messages.isEmpty;
+        _loading = false;
+      });
       return;
     }
 
     final atBottom = _isAtBottom;
     setState(() {
+      _failed = false;
       _userInfo = result['user'] != null
           ? Map<String, dynamic>.from(result['user'])
           : null;
@@ -319,8 +332,13 @@ class _AgentChatDetailScreenState extends State<AgentChatDetailScreen> {
     await _runGuarded(() async {
       final sent = await _chatService.sendPlanCard(widget.userId);
       if (!mounted) return;
-      if (sent == null) {
-        _toast('Could not send the plan list.');
+      // SEND_PLAN_CARD_RESULT_V1 — null is the transport failing; a body
+      // carrying success false is the server refusing. Only the first was
+      // handled, so a refusal left the agent watching a thread with no plan
+      // card in it and nothing said about why.
+      if (sent == null || sent['success'] == false) {
+        AppLog.e('sendPlanCard', sent?['message'] ?? 'no response');
+        _toast('အစီအစဉ်စာရင်း ပို့၍ မရပါ။ ထပ်မံ ကြိုးစားပါ။');
         return;
       }
       _loadMessages(silent: true);
@@ -355,14 +373,38 @@ class _AgentChatDetailScreenState extends State<AgentChatDetailScreen> {
     });
   }
 
-  Future<void> _approve(int reqId) async {
-    final ok = await _confirm(
-      title: 'Approve this request?',
-      body: 'Credit will be deducted from your balance.',
-      actionLabel: 'Approve',
-      actionColor: AppColors.accentInk,
+  /// APPROVE_SHOWS_COST_V1 — the dialog names who, what and how much.
+  ///
+  /// It used to say "Credit will be deducted from your balance" and nothing
+  /// else: no user, no plan, no number. [meta] is the renewal message's own
+  /// metadata, which is where those three facts already are.
+  Future<void> _approve(int reqId, Map<String, dynamic> meta) async {
+    final cost = _idOf(meta['estimated_cost']) ?? 0;
+    final planName = (meta['plan_name'] ?? '').toString();
+    final months = _idOf(meta['duration_months']) ?? 0;
+
+    final confirmed = await confirmAction(
+      context,
+      title: 'တောင်းဆိုမှုကို အတည်ပြုမလား',
+      message: 'အတည်ပြုပါက အောက်ပါပမာဏကို သင့် Credit မှ ချက်ချင်း နုတ်ယူပါမည်။',
+      details: [
+        ConfirmDetail('အသုံးပြုသူ', widget.username),
+        ConfirmDetail(
+          'အစီအစဉ်',
+          planName.isEmpty ? 'အစီအစဉ် မသိရပါ' : '$planName · $months လ',
+        ),
+        ConfirmDetail(
+          'ကုန်ကျမည့် Credit',
+          // The backend computes this; an older payload may not carry it, and
+          // a confident "0 MMK" would be worse than saying so.
+          cost > 0
+              ? '${Fmt.money.format(cost)} MMK'
+              : 'အတည်ပြုချိန်တွင် တွက်ချက်ပါမည်',
+          emphasise: true,
+        ),
+      ],
     );
-    if (ok != true) return;
+    if (!confirmed || !mounted) return;
 
     await _runGuarded(() async {
       final result = await _chatService.approveRequest(reqId);
@@ -586,11 +628,20 @@ class _AgentChatDetailScreenState extends State<AgentChatDetailScreen> {
             child: _loading
                 ? const AppLoader()
                 : _messages.isEmpty
-                ? const AppEmptyState(
-                    icon: Iconsax.message_text,
-                    title: 'No messages yet',
-                    subtitle: 'Anything you send appears here.',
-                  )
+                ? (_failed
+                      ? AppEmptyState(
+                          icon: Iconsax.cloud_cross,
+                          title: 'စာများ ဆွဲယူ၍ မရပါ',
+                          subtitle:
+                              'အင်တာနက် ချိတ်ဆက်မှုကို စစ်ဆေးပြီး ထပ်မံ ကြိုးစားပါ။',
+                          actionLabel: 'ထပ်မံကြိုးစားမည်',
+                          onAction: () => _loadMessages(),
+                        )
+                      : const AppEmptyState(
+                          icon: Iconsax.message_text,
+                          title: 'No messages yet',
+                          subtitle: 'Anything you send appears here.',
+                        ))
                 : Stack(
                     children: [
                       // Tapping the thread dismisses the keyboard. Without it
@@ -703,7 +754,7 @@ class _AgentChatDetailScreenState extends State<AgentChatDetailScreen> {
     final diff = DateTime.now().difference(parsed);
     if (diff.inMinutes < 60) return 'Last seen ${diff.inMinutes}m ago';
     if (diff.inHours < 24) return 'Last seen ${diff.inHours}h ago';
-    return 'Last seen ${DateFormat('dd MMM').format(parsed)}';
+    return 'Last seen ${Fmt.dayMonth.format(parsed)}';
   }
 }
 
@@ -840,7 +891,9 @@ class _UserInfoBar extends StatelessWidget {
     if (raw == null || raw.isEmpty) return null;
     final parsed = DateTime.tryParse(raw);
     if (parsed == null) return null;
-    return DateFormat('dd MMM yyyy').format(parsed);
+    // FMT_DATE_V1 — one DateFormat for the app, built on first use. This one
+    // was constructed for every chip built, on every rebuild of the info bar.
+    return Fmt.date.format(parsed);
   }
 }
 
@@ -904,7 +957,7 @@ class _MessageBubble extends StatelessWidget {
   final bool showDaySeparator;
   final bool isFirstInRun;
   final bool isLastInRun;
-  final Future<void> Function(int) onApprove;
+  final Future<void> Function(int, Map<String, dynamic>) onApprove;
   final Future<void> Function(int) onReject;
   final void Function(String, {bool isLocal}) onOpenImage;
 
@@ -987,7 +1040,7 @@ class _DaySeparator extends StatelessWidget {
         ? 'Today'
         : isYesterday
         ? 'Yesterday'
-        : DateFormat('dd MMM yyyy').format(parsed);
+        : Fmt.date.format(parsed);
 
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 14),
@@ -1201,14 +1254,15 @@ class _TextBubble extends StatelessWidget {
   static String _time(String raw) {
     final parsed = DateTime.tryParse(raw);
     if (parsed == null) return '';
-    return DateFormat('h:mm a').format(parsed.toLocal());
+    // Called once per bubble, per frame, on threads that run to hundreds.
+    return Fmt.time.format(parsed.toLocal());
   }
 }
 
 /// Renewal request, with the decision buttons on the message itself.
 class _RenewalBubble extends StatelessWidget {
   final Map<String, dynamic> msg;
-  final Future<void> Function(int) onApprove;
+  final Future<void> Function(int, Map<String, dynamic>) onApprove;
   final Future<void> Function(int) onReject;
   final void Function(String, {bool isLocal}) onOpenImage;
 
@@ -1293,11 +1347,14 @@ class _RenewalBubble extends StatelessWidget {
             ],
             if (reqId is int) ...[
               const SizedBox(height: 12),
+              // TAP_TARGET_44_V1 — both were 38dp, inside a bubble, next to
+              // each other, and one of them spends money. Raised to the 44
+              // minimum; nothing else about them changes.
               Row(
                 children: [
                   Expanded(
                     child: SizedBox(
-                      height: 38,
+                      height: 44,
                       child: OutlinedButton(
                         onPressed: () => onReject(reqId),
                         style: OutlinedButton.styleFrom(
@@ -1317,9 +1374,9 @@ class _RenewalBubble extends StatelessWidget {
                   const SizedBox(width: 8),
                   Expanded(
                     child: SizedBox(
-                      height: 38,
+                      height: 44,
                       child: FilledButton(
-                        onPressed: () => onApprove(reqId),
+                        onPressed: () => onApprove(reqId, meta),
                         style: FilledButton.styleFrom(
                           padding: EdgeInsets.zero,
                           minimumSize: Size.zero,
@@ -1590,7 +1647,6 @@ class _ExtendSheetState extends State<_ExtendSheet> {
   @override
   Widget build(BuildContext context) {
     final t = Theme.of(context).textTheme;
-    final money = NumberFormat('#,##0');
 
     return Padding(
       padding: EdgeInsets.only(
@@ -1638,7 +1694,10 @@ class _ExtendSheetState extends State<_ExtendSheet> {
               Text('Cost', style: t.bodyMedium),
               const Spacer(),
               Text(
-                widget.planPrice == 0 ? '—' : money.format(_cost),
+                // FMT_MONEY_SHEET_V1 — Fmt.money instead of a NumberFormat
+                // built in this build method, which runs on every tap of the
+                // month and day steppers.
+                widget.planPrice == 0 ? '—' : Fmt.money.format(_cost),
                 style: t.headlineMedium?.copyWith(fontSize: 20),
               ),
             ],

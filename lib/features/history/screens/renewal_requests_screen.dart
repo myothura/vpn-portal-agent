@@ -1,14 +1,13 @@
-import 'dart:ui';
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:iconsax/iconsax.dart';
-import 'package:intl/intl.dart';
 
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import 'package:vpn_agent_app/core/services/agent_realtime_service.dart';
 import 'package:vpn_agent_app/core/theme/app_colors.dart';
+import 'package:vpn_agent_app/core/utils/formatters.dart';
+import 'package:vpn_agent_app/core/widgets/confirm_dialog.dart';
 import 'package:vpn_agent_app/features/scaffold/main_scaffold.dart';
 import 'package:vpn_agent_app/core/theme/app_theme.dart';
 import 'package:vpn_agent_app/shared_widgets/ui/app_surface.dart';
@@ -101,6 +100,11 @@ class _RenewalRequestsScreenState extends State<RenewalRequestsScreen> {
   int _page = 1;
   int _lastPage = 1;
 
+  /// LIST_FAILURE_STATE_V1 — set when a fetch came back with nothing AND
+  /// there is nothing already on screen. An empty list and a list that failed
+  /// to load are different facts and the agent can only act on one of them.
+  bool _failed = false;
+
   /// Ids currently being approved or rejected, so a row can show its own
   /// progress instead of an overlay blocking the whole list.
   final Set<int> _busyIds = {};
@@ -178,12 +182,23 @@ class _RenewalRequestsScreenState extends State<RenewalRequestsScreen> {
     _load(refresh: true);
   }
 
-  Future<void> _load({bool refresh = false}) async {
+  /// REFRESH_IN_PLACE_V1 — a reload keeps the rows it already has.
+  ///
+  /// This used to clear _requests and raise the skeleton before every fetch,
+  /// so an arriving request, a tab return or a pull to refresh replaced the
+  /// list being read with five grey cards for the length of a round trip. The
+  /// skeleton belongs to a screen that has never loaded anything; a reload
+  /// swaps the rows when the response lands and shows nothing in between.
+  ///
+  /// [clearFirst] is for a filter change, which is a different query — there
+  /// the old rows are the wrong status and holding them on screen would be a
+  /// lie rather than a courtesy.
+  Future<void> _load({bool refresh = false, bool clearFirst = false}) async {
     if (refresh) {
       setState(() {
-        _loading = true;
         _page = 1;
-        _requests = [];
+        if (clearFirst) _requests = [];
+        _loading = _requests.isEmpty;
       });
     }
 
@@ -200,6 +215,10 @@ class _RenewalRequestsScreenState extends State<RenewalRequestsScreen> {
             : [..._requests, ...response.requests];
         _lastPage = response.lastPage;
         if (response.counts.isNotEmpty) _counts = response.counts;
+        _failed = false;
+      } else {
+        // Only a failure worth showing when it leaves the screen blank.
+        _failed = _requests.isEmpty;
       }
       _loading = false;
       _loadingMore = false;
@@ -224,21 +243,34 @@ class _RenewalRequestsScreenState extends State<RenewalRequestsScreen> {
     if (_filter == status) return;
     HapticFeedback.selectionClick();
     setState(() => _filter = status);
-    _load(refresh: true);
+    // Cleared: a different status is a different query, and the rows on
+    // screen belong to the tab being left.
+    _load(refresh: true, clearFirst: true);
   }
 
   // ── Decisions ──
 
+  /// APPROVE_SHOWS_COST_V1 — the dialog names the amount.
+  ///
+  /// The figure is already on the card the agent tapped; it was simply not
+  /// carried into the confirmation, which said only that credit would be
+  /// deducted. That is the one thing the agent already knew.
   Future<void> _approve(RenewalRequest request) async {
-    final confirmed = await _confirm(
-      title: 'Approve this request?',
-      body:
-          '${request.vpnUserName} — ${request.subtitle}\n\n'
-          'Credit will be deducted from your balance.',
-      actionLabel: 'Approve',
-      actionColor: AppColors.accentInk,
+    final confirmed = await confirmAction(
+      context,
+      title: 'တောင်းဆိုမှုကို အတည်ပြုမလား',
+      message: 'အတည်ပြုပါက အောက်ပါပမာဏကို သင့် Credit မှ ချက်ချင်း နုတ်ယူပါမည်။',
+      details: [
+        ConfirmDetail('အသုံးပြုသူ', request.vpnUserName),
+        ConfirmDetail('အစီအစဉ်', request.subtitle),
+        ConfirmDetail(
+          'ကုန်ကျမည့် Credit',
+          '${Fmt.money.format(request.estimatedCost)} MMK',
+          emphasise: true,
+        ),
+      ],
     );
-    if (confirmed != true) return;
+    if (!confirmed || !mounted) return;
 
     setState(() => _busyIds.add(request.id));
     final ok = await _service.approveRequest(request.id);
@@ -300,6 +332,10 @@ class _RenewalRequestsScreenState extends State<RenewalRequestsScreen> {
         ],
       ),
     );
+    // REJECT_CONTROLLER_DISPOSE_V1 — the dialog has closed and its field went
+    // with it, but a TextEditingController is a ChangeNotifier and stays
+    // registered until it is disposed. One was leaked per rejection.
+    controller.dispose();
 
     if (reason == null || reason.isEmpty || !mounted) {
       if (reason != null && reason.isEmpty) _toast('Add a reason to reject.');
@@ -318,31 +354,9 @@ class _RenewalRequestsScreenState extends State<RenewalRequestsScreen> {
     }
   }
 
-  Future<bool?> _confirm({
-    required String title,
-    required String body,
-    required String actionLabel,
-    required Color actionColor,
-  }) {
-    return showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(title),
-        content: Text(body, style: Theme.of(ctx).textTheme.bodyMedium),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: actionColor),
-            onPressed: () => Navigator.pop(ctx, true),
-            child: Text(actionLabel),
-          ),
-        ],
-      ),
-    );
-  }
+  // LOCAL_CONFIRM_REMOVED_V1 — the screen's own _confirm lived here. Its one
+  // caller now uses confirmAction from core/widgets, which shows the amount
+  // being spent rather than only naming the action.
 
   void _toast(String message) {
     ScaffoldMessenger.of(
@@ -356,8 +370,8 @@ class _RenewalRequestsScreenState extends State<RenewalRequestsScreen> {
       return;
     }
     Navigator.of(context).push(
-      // opaque: false so the list stays rendered underneath for the blur to
-      // sample; a normal route would leave nothing there to blur.
+      // opaque: false so the list stays rendered underneath the scrim; a
+      // normal route would cut it away entirely.
       PageRouteBuilder(
         opaque: false,
         barrierDismissible: true,
@@ -414,7 +428,7 @@ class _RenewalRequestsScreenState extends State<RenewalRequestsScreen> {
                   child: _loading
                       ? const _ListSkeleton()
                       : _requests.isEmpty
-                      ? _buildEmpty()
+                      ? (_failed ? _buildFailed() : _buildEmpty())
                       : RefreshIndicator(
                           onRefresh: () => _load(refresh: true),
                           color: AppColors.accentInk,
@@ -492,6 +506,18 @@ class _RenewalRequestsScreenState extends State<RenewalRequestsScreen> {
       subtitle: 'Renewals your users submit will appear here.',
     ),
   };
+
+  /// Shown instead of the empty state when the fetch itself failed.
+  ///
+  /// The pending tab's empty state reads "Nothing waiting — every request has
+  /// been dealt with", which is the opposite of true after a timeout.
+  Widget _buildFailed() => AppEmptyState(
+    icon: Iconsax.cloud_cross,
+    title: 'စာရင်း ဆွဲယူ၍ မရပါ',
+    subtitle: 'အင်တာနက် ချိတ်ဆက်မှုကို စစ်ဆေးပြီး ထပ်မံ ကြိုးစားပါ။',
+    actionLabel: 'ထပ်မံကြိုးစားမည်',
+    onAction: () => _load(refresh: true, clearFirst: true),
+  );
 }
 
 // ── Card ──────────────────────────────────────────────────────────────────
@@ -517,7 +543,6 @@ class _RequestCard extends StatelessWidget {
     final kind = _RequestKind.of(request.type);
     final status = _StatusStyle.of(request.status);
     final pending = request.status == 'pending';
-    final money = NumberFormat('#,##0');
 
     return AppCard(
       padding: EdgeInsets.zero,
@@ -556,8 +581,11 @@ class _RequestCard extends StatelessWidget {
           // the end of sentences of different lengths.
           _DetailRow(
             label: 'Amount',
+            // FMT_MONEY_V1 — Fmt.money, built once, instead of a NumberFormat
+            // constructed in this build method: once per visible row, per
+            // frame, on a list that reaches five hundred rows.
             valueWidget: Text(
-              '${money.format(request.estimatedCost)} MMK',
+              '${Fmt.money.format(request.estimatedCost)} MMK',
               style: t.titleMedium?.copyWith(
                 fontSize: 15,
                 color: AppColors.orange,
@@ -596,7 +624,9 @@ class _RequestCard extends StatelessWidget {
                 children: [
                   Expanded(
                     child: SizedBox(
-                      height: 42,
+                      // TAP_TARGET_44_V1 — 42 was under the platform minimum,
+                      // on a button that sits beside a destructive one.
+                      height: 44,
                       child: OutlinedButton(
                         onPressed: busy ? null : onReject,
                         style: OutlinedButton.styleFrom(
@@ -618,10 +648,11 @@ class _RequestCard extends StatelessWidget {
                   const SizedBox(width: 10),
                   Expanded(
                     child: SizedBox(
-                      // Both halves fixed to the same 42: the theme's 48
-                      // minimum made a pair of buttons the tallest thing in a
-                      // card whose subject is the figures above them.
-                      height: 42,
+                      // Both halves fixed to the same 44: the minimum,
+                      // and no more. The theme's 48 made a pair of buttons the
+                      // tallest thing in a card whose subject is the figures
+                      // above them.
+                      height: 44,
                       child: FilledButton.icon(
                         onPressed: busy ? null : onApprove,
                         style: FilledButton.styleFrom(
@@ -657,7 +688,7 @@ class _RequestCard extends StatelessWidget {
   static String _formatDate(String raw) {
     final parsed = DateTime.tryParse(raw);
     if (parsed == null) return raw;
-    return DateFormat('dd MMM yyyy, h:mm a').format(parsed.toLocal());
+    return Fmt.dateTime.format(parsed.toLocal());
   }
 }
 
@@ -716,32 +747,48 @@ class _DetailRow extends StatelessWidget {
 
 /// Hairline of dashes. A solid rule between every field made the card read as
 /// a table; dashes separate without carrying the same weight.
+///
+/// DASHED_LINE_PAINTER_V1 — one painter, not one widget per dash. This was a
+/// LayoutBuilder wrapping a Row of roughly a hundred SizedBoxes, each with a
+/// DecoratedBox inside it, for a single hairline — and there are four or five
+/// of them per card, laid out again on every frame the list moves.
 class _DashedLine extends StatelessWidget {
   const _DashedLine();
 
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        const dash = 3.0;
-        const gap = 3.0;
-        final count = (constraints.maxWidth / (dash + gap)).floor();
-        return Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: List.generate(
-            count,
-            (_) => const SizedBox(
-              width: dash,
-              height: 1,
-              child: DecoratedBox(
-                decoration: BoxDecoration(color: AppColors.border),
-              ),
-            ),
-          ),
-        );
-      },
+    return const SizedBox(
+      height: 1,
+      width: double.infinity,
+      child: CustomPaint(painter: _DashedLinePainter()),
     );
   }
+}
+
+class _DashedLinePainter extends CustomPainter {
+  const _DashedLinePainter();
+
+  static const double _dash = 3;
+  static const double _gap = 3;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = AppColors.border
+      ..strokeWidth = 1
+      ..strokeCap = StrokeCap.butt;
+
+    final y = size.height / 2;
+    for (var x = 0.0; x < size.width; x += _dash + _gap) {
+      final end = x + _dash > size.width ? size.width : x + _dash;
+      canvas.drawLine(Offset(x, y), Offset(end, y), paint);
+    }
+  }
+
+  /// Nothing here varies: same colour, same dash, same gap on every row. A
+  /// size change is handled by the framework without asking the painter.
+  @override
+  bool shouldRepaint(_DashedLinePainter oldDelegate) => false;
 }
 
 class _FilterChip extends StatelessWidget {
@@ -810,12 +857,10 @@ class _FilterChip extends StatelessWidget {
   }
 }
 
-/// Full-screen payment slip over a blurred copy of the list.
+/// Full-screen payment slip over a scrimmed copy of the list.
 ///
-/// The one place blur earns its cost in this app: it keeps the request the
-/// agent was reading visible behind the image, so checking a slip against the
-/// row does not mean navigating back and forth. Opened as an opaque page
-/// instead, the context was simply gone.
+/// The list stays on the route beneath so that closing the image returns the
+/// agent to the row they were reading rather than to the top of the screen.
 class _ScreenshotViewer extends StatelessWidget {
   final String url;
   final String title;
@@ -828,15 +873,14 @@ class _ScreenshotViewer extends StatelessWidget {
       backgroundColor: Colors.transparent,
       body: Stack(
         children: [
+          // SCRIM_NOT_BLUR_V1 — a plain fill where a sigma-18 BackdropFilter
+          // used to be. That was a saveLayer over the whole window on a
+          // non-opaque route, re-rasterised through the fade-in, and it was
+          // the most expensive thing on this page. A light scrim rather than a
+          // dark one: the page behind it is white.
           Positioned.fill(
-            child: BackdropFilter(
-              filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-              // A light scrim, not a dark one: the page behind is white, and
-              // dimming it to near-black would defeat the point of leaving it
-              // visible.
-              child: Container(
-                color: AppColors.background.withValues(alpha: 0.72),
-              ),
+            child: ColoredBox(
+              color: AppColors.background.withValues(alpha: 0.9),
             ),
           ),
           SafeArea(

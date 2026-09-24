@@ -5,6 +5,7 @@ import 'package:intl/intl.dart';
 
 import 'package:vpn_agent_app/core/theme/app_colors.dart';
 import 'package:vpn_agent_app/core/theme/app_theme.dart';
+import 'package:vpn_agent_app/core/utils/formatters.dart';
 import 'package:vpn_agent_app/shared_widgets/ui/app_surface.dart';
 
 import 'package:vpn_agent_app/features/profit_loss/models/profit_loss_model.dart';
@@ -34,6 +35,14 @@ class _ProfitLossScreenState extends State<ProfitLossScreen> {
   bool _loadingMore = false;
   int _salesPage = 1;
 
+  /// PL_STATE_V1 — a page request that failed is not the end of the list.
+  ///
+  /// Before this, a failed fetch left the strip below the last row looking
+  /// exactly like "you have reached the bottom", and the scroll listener
+  /// fired the same failing request again on every scroll tick. Now the
+  /// failure is shown once, the auto-retry stops, and the agent chooses.
+  bool _moreFailed = false;
+
   @override
   void initState() {
     super.initState();
@@ -53,12 +62,18 @@ class _ProfitLossScreenState extends State<ProfitLossScreen> {
     if (p.pixels >= p.maxScrollExtent - 600) _loadMoreSales();
   }
 
-  Future<void> _loadMoreSales() async {
+  /// [retry] is the agent tapping the failed-page notice. Scroll-driven
+  /// calls leave it false, so one failure is not retried on every tick.
+  Future<void> _loadMoreSales({bool retry = false}) async {
     final report = _report;
     if (_loadingMore || _loading || report == null) return;
     if (_salesPage >= report.directSalesLastPage) return;
+    if (_moreFailed && !retry) return;
 
-    setState(() => _loadingMore = true);
+    setState(() {
+      _loadingMore = true;
+      _moreFailed = false;
+    });
     final next = await _service.getReport(month: _month, page: _salesPage + 1);
     if (!mounted) return;
 
@@ -66,6 +81,8 @@ class _ProfitLossScreenState extends State<ProfitLossScreen> {
       if (next != null) {
         _sales = [..._sales, ...next.directSales];
         _salesPage = next.directSalesPage;
+      } else {
+        _moreFailed = true;
       }
       _loadingMore = false;
     });
@@ -79,6 +96,7 @@ class _ProfitLossScreenState extends State<ProfitLossScreen> {
       _report = report;
       _sales = report?.directSales ?? [];
       _salesPage = report?.directSalesPage ?? 1;
+      _moreFailed = false;
       _month = report?.month ?? month ?? _month;
       _loading = false;
     });
@@ -114,7 +132,7 @@ class _ProfitLossScreenState extends State<ProfitLossScreen> {
     final ok = await _confirm(
       title: 'Remove ${entry.name}?',
       body:
-          '${NumberFormat('#,##0').format(entry.amount)} Ks will come out of '
+          '${Fmt.money.format(entry.amount)} Ks will come out of '
           "this month's ${entry.isExpense ? 'expenses' : 'revenue'}.",
       action: 'Remove',
       color: AppColors.danger,
@@ -159,14 +177,12 @@ class _ProfitLossScreenState extends State<ProfitLossScreen> {
   }
 
   Future<void> _toggleExclude(DirectSale sale) async {
-    final money = NumberFormat('#,##0');
-
     final ok = await _confirm(
       title: sale.excluded ? 'Count this again?' : 'Exclude from revenue?',
       body: sale.excluded
-          ? '${money.format(sale.amount)} Ks goes back into this '
+          ? '${Fmt.money.format(sale.amount)} Ks goes back into this '
                 "month's revenue."
-          : '${money.format(sale.amount)} Ks comes out of this month\'s '
+          : '${Fmt.money.format(sale.amount)} Ks comes out of this month\'s '
                 'revenue. This is reversible.',
       action: sale.excluded ? 'Count it' : 'Exclude',
       color: sale.excluded ? AppColors.accentInk : AppColors.warning,
@@ -292,106 +308,152 @@ class _ProfitLossScreenState extends State<ProfitLossScreen> {
                     onRefresh: () => _load(),
                     color: AppColors.accentInk,
                     backgroundColor: AppColors.surface,
-                    child: ListView(
+                    // PL_SLIVER_V1 — lazy rows, not 500 eager ones.
+                    //
+                    // This was a plain ListView, so every direct sale in the
+                    // month was constructed before the first frame and again
+                    // on every setState — about 490 of them off screen.
+                    // Excluding one sale rebuilt the lot.
+                    //
+                    // The fixed part above the lists is one adapter; each
+                    // list is its own SliverList with a childCount, so the
+                    // section headings stay put and only visible rows are
+                    // built. The ListView's fromLTRB(16, 8, 16, 32) is split
+                    // across the SliverPaddings below and adds up the same.
+                    child: CustomScrollView(
                       controller: _scrollController,
-                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
                       physics: const AlwaysScrollableScrollPhysics(
                         parent: BouncingScrollPhysics(),
                       ),
-                      children: [
-                        _MonthPicker(
-                          month: report.month,
-                          months: report.months,
-                          onChanged: (m) => _load(month: m),
-                        ),
-                        const SizedBox(height: 14),
-                        _HeadlineCard(summary: report.summary),
-                        const SizedBox(height: 20),
-                        _Breakdown(
-                          title: 'Revenue',
-                          lines: report.summary.revenueLines,
-                          total: report.summary.revenueTotal,
-                          color: AppColors.accentInk,
-                        ),
-                        const SizedBox(height: 16),
-                        _Breakdown(
-                          title: 'Expenses',
-                          lines: report.summary.expenseLines,
-                          total: report.summary.expenseTotal,
-                          color: AppColors.danger,
+                      slivers: [
+                        SliverPadding(
+                          padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+                          sliver: SliverToBoxAdapter(
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                _MonthPicker(
+                                  month: report.month,
+                                  months: report.months,
+                                  onChanged: (m) => _load(month: m),
+                                ),
+                                const SizedBox(height: 14),
+                                _HeadlineCard(summary: report.summary),
+                                const SizedBox(height: 20),
+                                _Breakdown(
+                                  title: 'Revenue',
+                                  lines: report.summary.revenueLines,
+                                  total: report.summary.revenueTotal,
+                                  color: AppColors.accentInk,
+                                ),
+                                const SizedBox(height: 16),
+                                _Breakdown(
+                                  title: 'Expenses',
+                                  lines: report.summary.expenseLines,
+                                  total: report.summary.expenseTotal,
+                                  color: AppColors.danger,
+                                ),
+                              ],
+                            ),
+                          ),
                         ),
                         if (report.entries.isNotEmpty) ...[
-                          const SizedBox(height: 22),
-                          _SectionHead(
-                            icon: Iconsax.edit_2,
-                            color: AppColors.violet,
-                            title: 'Manual entries',
-                            subtitle: 'Costs and income entered by hand',
-                            count: report.entries.length,
-                          ),
-                          const SizedBox(height: 10),
-                          for (final entry in report.entries)
-                            Padding(
-                              padding: const EdgeInsets.only(bottom: 8),
-                              child: _EntryRow(
-                                entry: entry,
-                                onDelete: () => _deleteEntry(entry),
+                          SliverPadding(
+                            padding: const EdgeInsets.fromLTRB(16, 22, 16, 10),
+                            sliver: SliverToBoxAdapter(
+                              child: _SectionHead(
+                                icon: Iconsax.edit_2,
+                                color: AppColors.violet,
+                                title: 'Manual entries',
+                                subtitle: 'Costs and income entered by hand',
+                                count: report.entries.length,
                               ),
                             ),
+                          ),
+                          SliverPadding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                            ),
+                            sliver: SliverList(
+                              delegate: SliverChildBuilderDelegate((_, i) {
+                                final entry = report.entries[i];
+                                return Padding(
+                                  padding: const EdgeInsets.only(bottom: 8),
+                                  child: _EntryRow(
+                                    entry: entry,
+                                    onDelete: () => _deleteEntry(entry),
+                                  ),
+                                );
+                              }, childCount: report.entries.length),
+                            ),
+                          ),
                         ],
                         if (report.topups.isNotEmpty) ...[
-                          const SizedBox(height: 22),
-                          _SectionHead(
-                            icon: Iconsax.wallet_add,
-                            color: AppColors.accentInk,
-                            title: 'Agent top-ups',
-                            // Says which of the two numbers on each row is the
-                            // revenue: the cash, not the credit granted.
-                            subtitle: 'Cash paid in by agents',
-                            count: report.topups.length,
-                          ),
-                          const SizedBox(height: 10),
-                          for (final row in report.topups)
-                            Padding(
-                              padding: const EdgeInsets.only(bottom: 8),
-                              child: _TopupRowCard(row: row),
+                          SliverPadding(
+                            padding: const EdgeInsets.fromLTRB(16, 22, 16, 10),
+                            sliver: SliverToBoxAdapter(
+                              child: _SectionHead(
+                                icon: Iconsax.wallet_add,
+                                color: AppColors.accentInk,
+                                title: 'Agent top-ups',
+                                // Says which of the two numbers on each row
+                                // is the revenue: the cash, not the credit.
+                                subtitle: 'Cash paid in by agents',
+                                count: report.topups.length,
+                              ),
                             ),
+                          ),
+                          SliverPadding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                            ),
+                            sliver: SliverList(
+                              delegate: SliverChildBuilderDelegate(
+                                (_, i) => Padding(
+                                  padding: const EdgeInsets.only(bottom: 8),
+                                  child: _TopupRowCard(row: report.topups[i]),
+                                ),
+                                childCount: report.topups.length,
+                              ),
+                            ),
+                          ),
                         ],
-                        const SizedBox(height: 22),
-                        _SectionHead(
-                          icon: Iconsax.shopping_cart,
-                          color: AppColors.info,
-                          title: 'Direct sales',
-                          // Says what tapping does before the agent taps: it
-                          // changes the month's revenue.
-                          subtitle: 'Tap a row to exclude it from revenue',
-                          count: report.directSalesTotal,
+                        SliverPadding(
+                          padding: const EdgeInsets.fromLTRB(16, 22, 16, 10),
+                          sliver: SliverToBoxAdapter(
+                            child: _SectionHead(
+                              icon: Iconsax.shopping_cart,
+                              color: AppColors.info,
+                              title: 'Direct sales',
+                              // Says what tapping does before the agent taps:
+                              // it changes the month's revenue.
+                              subtitle: 'Tap a row to exclude it from revenue',
+                              count: report.directSalesTotal,
+                            ),
+                          ),
                         ),
-                        const SizedBox(height: 10),
-                        for (final sale in _sales)
-                          Padding(
-                            padding: const EdgeInsets.only(bottom: 8),
-                            child: _SaleRow(
-                              sale: sale,
-                              onTap: () => _toggleExclude(sale),
-                            ),
+                        SliverPadding(
+                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          sliver: SliverList(
+                            delegate: SliverChildBuilderDelegate((_, i) {
+                              final sale = _sales[i];
+                              return Padding(
+                                padding: const EdgeInsets.only(bottom: 8),
+                                child: _SaleRow(
+                                  sale: sale,
+                                  onTap: () => _toggleExclude(sale),
+                                ),
+                              );
+                            }, childCount: _sales.length),
                           ),
-                        if (_loadingMore)
-                          const Padding(
-                            padding: EdgeInsets.symmetric(vertical: 20),
-                            child: AppLoader(compact: true),
-                          )
-                        else if (_salesPage < report.directSalesLastPage)
-                          const SizedBox(height: 20)
-                        else if (report.directSalesTotal > 0) ...[
-                          const SizedBox(height: 6),
-                          Center(
-                            child: Text(
-                              '${report.directSalesTotal} sales this month',
-                              style: Theme.of(context).textTheme.bodySmall,
-                            ),
+                        ),
+                        SliverPadding(
+                          padding: const EdgeInsets.fromLTRB(16, 0, 16, 32),
+                          sliver: SliverToBoxAdapter(
+                            child: _salesFooter(report),
                           ),
-                        ],
+                        ),
                       ],
                     ),
                   ),
@@ -401,20 +463,99 @@ class _ProfitLossScreenState extends State<ProfitLossScreen> {
     );
   }
 
-  Widget _buildError() {
-    return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const AppEmptyState(
-            icon: Iconsax.chart_2,
-            title: 'Could not load the report',
-            subtitle: 'This is only available to the main account.',
+  /// What sits below the last loaded sale.
+  ///
+  /// Four different things, and the old tree could say two of them. A page
+  /// still loading had a spinner; everything else was a blank strip — the
+  /// end of a busy month, a month with no sales at all, and a page request
+  /// that had just failed all looked the same. The failed one mattered
+  /// most, because _onScroll kept re-issuing it with nothing on screen to
+  /// say so.
+  Widget _salesFooter(ProfitLossReport report) {
+    if (_loadingMore) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 20),
+        child: AppLoader(compact: true),
+      );
+    }
+
+    if (_moreFailed) {
+      return Padding(
+        padding: const EdgeInsets.only(top: 10),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'နောက်ထပ် အရောင်းစာရင်း ဆွဲယူ၍ မရပါ',
+              textAlign: TextAlign.center,
+              style: Theme.of(
+                context,
+              ).textTheme.bodySmall?.copyWith(color: AppColors.warning),
+            ),
+            TextButton(
+              onPressed: () => _loadMoreSales(retry: true),
+              style: TextButton.styleFrom(
+                minimumSize: const Size(88, 48),
+                foregroundColor: AppColors.accentInk,
+              ),
+              child: const Text('ထပ်မံ ကြိုးစားရန်'),
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (_salesPage < report.directSalesLastPage) {
+      return const SizedBox(height: 20);
+    }
+
+    if (report.directSalesTotal > 0) {
+      return Padding(
+        padding: const EdgeInsets.only(top: 6),
+        child: Center(
+          child: Text(
+            '${report.directSalesTotal} sales this month',
+            style: Theme.of(context).textTheme.bodySmall,
           ),
-          const SizedBox(height: 8),
-          FilledButton(onPressed: () => _load(), child: const Text('Retry')),
-        ],
+        ),
+      );
+    }
+
+    // Nothing was sold this month. Said plainly, so it is not read as a load
+    // that quietly failed — which is what the blank strip used to mean too.
+    return const Padding(
+      padding: EdgeInsets.only(top: 6),
+      child: AppEmptyState(
+        icon: Iconsax.receipt_item,
+        title: 'ဤလအတွင်း တိုက်ရိုက် ရောင်းချမှု မရှိပါ',
+        subtitle: 'အရောင်းတစ်ခု ပြီးမြောက်သည်နှင့် ဤနေရာတွင် ပေါ်လာပါမည်။',
       ),
+    );
+  }
+
+  /// PL_ERROR_V1 — what actually failed, or an honest list of what might
+  /// have.
+  ///
+  /// This used to say "This is only available to the main account." for
+  /// every failure. On a Myanmar mobile connection the common one is a
+  /// 15-second receive timeout, and reading that as "you do not have
+  /// access" sends the agent off to ask for permission they already hold.
+  ///
+  /// ProfitLossService.getReport() returns null for a 403, a 500 and a dead
+  /// socket alike — it catches, logs and gives back null — so this screen
+  /// has nothing to tell them apart with. Rather than pick a cause and be
+  /// wrong most of the time, the copy names the three and offers the retry
+  /// that the two common ones need. Splitting this properly means
+  /// getReport() reporting its status code, which is not this file.
+  Widget _buildError() {
+    return AppEmptyState(
+      icon: Iconsax.chart_2,
+      title: 'အစီရင်ခံစာ ရယူ၍ မရပါ',
+      subtitle:
+          'ကွန်ရက် ပြတ်တောက်မှု၊ ဆာဗာ ပြဿနာ သို့မဟုတ် ဤအကောင့်တွင် '
+          'ခွင့်ပြုချက် မရှိခြင်း ဖြစ်နိုင်ပါသည်။',
+      actionLabel: 'ထပ်မံ ကြိုးစားရန်',
+      onAction: () => _load(),
     );
   }
 }
@@ -434,13 +575,18 @@ class _MonthPicker extends StatelessWidget {
 
   static String _label(String raw) {
     final parsed = DateTime.tryParse('$raw-01');
-    return parsed == null ? raw : DateFormat('MMM yyyy').format(parsed);
+    return parsed == null ? raw : Fmt.monthYear.format(parsed);
   }
 
   @override
   Widget build(BuildContext context) {
+    // PL_TAP_V1 — 44 rather than 34.
+    //
+    // These chips are the only way to change month and the whole strip was a
+    // 34dp target, ten under the minimum. The extra ten also stops the label
+    // clipping at a 1.3x font scale, which the tight 34dp box did.
     return SizedBox(
-      height: 34,
+      height: 44,
       // Horizontal, newest first: the current month is what is usually wanted,
       // and a dropdown of thirteen would hide it behind a tap.
       child: ListView.separated(
@@ -493,7 +639,6 @@ class _HeadlineCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = Theme.of(context).textTheme;
-    final money = NumberFormat('#,##0');
     final profitable = summary.profit >= 0;
 
     return AppCard(
@@ -523,7 +668,7 @@ class _HeadlineCard extends StatelessWidget {
           ),
           const SizedBox(height: 4),
           Text(
-            money.format(summary.profit),
+            Fmt.money.format(summary.profit),
             style: t.displaySmall?.copyWith(
               fontSize: 32,
               color: profitable ? AppColors.textOnInk : AppColors.danger,
@@ -537,7 +682,7 @@ class _HeadlineCard extends StatelessWidget {
               Expanded(
                 child: _InkFigure(
                   label: 'Revenue',
-                  value: money.format(summary.revenueTotal),
+                  value: Fmt.money.format(summary.revenueTotal),
                   color: AppColors.accent,
                 ),
               ),
@@ -550,7 +695,7 @@ class _HeadlineCard extends StatelessWidget {
               Expanded(
                 child: _InkFigure(
                   label: 'Expenses',
-                  value: money.format(summary.expenseTotal),
+                  value: Fmt.money.format(summary.expenseTotal),
                   color: AppColors.danger,
                 ),
               ),
@@ -626,7 +771,6 @@ class _Breakdown extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = Theme.of(context).textTheme;
-    final money = NumberFormat('#,##0');
 
     return AppCard(
       radius: AppTheme.radiusMd,
@@ -645,7 +789,7 @@ class _Breakdown extends StatelessWidget {
               ),
               const Spacer(),
               Text(
-                money.format(total),
+                Fmt.money.format(total),
                 style: t.titleMedium?.copyWith(fontSize: 15, color: color),
               ),
             ],
@@ -678,7 +822,6 @@ class _BreakdownLine extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = Theme.of(context).textTheme;
-    final money = NumberFormat('#,##0');
     final share = total == 0 ? 0.0 : line.total / total;
 
     return Column(
@@ -695,7 +838,7 @@ class _BreakdownLine extends StatelessWidget {
             ),
             const SizedBox(width: 10),
             Text(
-              money.format(line.total),
+              Fmt.money.format(line.total),
               style: t.bodyLarge?.copyWith(
                 fontSize: 13.5,
                 fontWeight: FontWeight.w700,
@@ -732,7 +875,6 @@ class _EntryRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = Theme.of(context).textTheme;
-    final money = NumberFormat('#,##0');
 
     return AppCard(
       radius: AppTheme.radiusMd,
@@ -765,18 +907,23 @@ class _EntryRow extends StatelessWidget {
             ),
           ),
           Text(
-            money.format(entry.amount),
+            Fmt.money.format(entry.amount),
             style: t.bodyLarge?.copyWith(
               fontSize: 13.5,
               fontWeight: FontWeight.w700,
               color: entry.isExpense ? AppColors.danger : AppColors.accentInk,
             ),
           ),
+          // PL_TAP_V2 — VisualDensity.compact takes eight off IconButton's
+          // 48dp box, leaving 40 for a control that deletes a line from the
+          // month. The icon is still 16dp; only the area that accepts the
+          // tap changed.
           IconButton(
             onPressed: onDelete,
             icon: const Icon(Iconsax.trash, size: 16),
             color: AppColors.textTertiary,
-            visualDensity: VisualDensity.compact,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
           ),
         ],
       ),
@@ -792,7 +939,6 @@ class _TopupRowCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = Theme.of(context).textTheme;
-    final money = NumberFormat('#,##0');
 
     return AppCard(
       radius: AppTheme.radiusMd,
@@ -843,8 +989,8 @@ class _TopupRowCard extends StatelessWidget {
                 Text(
                   // Cash is the revenue; credit is what they got for it. Both
                   // matter and they are not the same number.
-                  '${money.format(row.cashReceived)} cash '
-                  '→ ${money.format(row.amount)} credit',
+                  '${Fmt.money.format(row.cashReceived)} cash '
+                  '→ ${Fmt.money.format(row.amount)} credit',
                   style: t.bodySmall,
                 ),
               ],
@@ -873,6 +1019,11 @@ class _SaleRow extends StatelessWidget {
     'assets/images/avatars/a2.png',
   ];
 
+  /// The excluded-row fade, as something Image can paint with directly.
+  /// Image.opacity takes an Animation; a stopped one never ticks and costs
+  /// nothing to hold as a const.
+  static const _fadedAvatar = AlwaysStoppedAnimation<double>(0.4);
+
   static String _avatarFor(String username) {
     if (username.isEmpty) return _avatars.first;
     var hash = 0;
@@ -885,7 +1036,6 @@ class _SaleRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = Theme.of(context).textTheme;
-    final money = NumberFormat('#,##0');
     final username = sale.username;
 
     return AppCard(
@@ -898,32 +1048,40 @@ class _SaleRow extends StatelessWidget {
         children: [
           // The same portraits as the user list, so a name recognised there is
           // recognisable here. Greyed when the row is excluded.
-          Opacity(
-            opacity: sale.excluded ? 0.4 : 1,
-            child: username == null
-                ? Container(
+          //
+          // PL_OPACITY_V1 — the fade was an Opacity wrapper, and Opacity is
+          // a saveLayer: an offscreen buffer and a composite for every
+          // excluded row on screen, every frame. Neither child needs one.
+          // The placeholder fades through its own two colours, and Image
+          // folds opacity into the paint it already uses.
+          username == null
+              ? Container(
+                  width: 36,
+                  height: 36,
+                  decoration: BoxDecoration(
+                    color: sale.excluded
+                        ? AppColors.surfaceAlt.withValues(alpha: 0.4)
+                        : AppColors.surfaceAlt,
+                    shape: BoxShape.circle,
+                  ),
+                  alignment: Alignment.center,
+                  child: Icon(
+                    Iconsax.receipt_item,
+                    size: 16,
+                    color: sale.excluded
+                        ? AppColors.textTertiary.withValues(alpha: 0.4)
+                        : AppColors.textTertiary,
+                  ),
+                )
+              : ClipOval(
+                  child: Image.asset(
+                    _avatarFor(username),
                     width: 36,
                     height: 36,
-                    decoration: const BoxDecoration(
-                      color: AppColors.surfaceAlt,
-                      shape: BoxShape.circle,
-                    ),
-                    alignment: Alignment.center,
-                    child: const Icon(
-                      Iconsax.receipt_item,
-                      size: 16,
-                      color: AppColors.textTertiary,
-                    ),
-                  )
-                : ClipOval(
-                    child: Image.asset(
-                      _avatarFor(username),
-                      width: 36,
-                      height: 36,
-                      fit: BoxFit.cover,
-                    ),
+                    fit: BoxFit.cover,
+                    opacity: sale.excluded ? _fadedAvatar : null,
                   ),
-          ),
+                ),
           const SizedBox(width: 11),
           Expanded(
             child: Column(
@@ -972,7 +1130,7 @@ class _SaleRow extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
               Text(
-                money.format(sale.amount),
+                Fmt.money.format(sale.amount),
                 style: t.bodyLarge?.copyWith(
                   fontSize: 13.5,
                   fontWeight: FontWeight.w700,
@@ -999,10 +1157,16 @@ class _SaleRow extends StatelessWidget {
     );
   }
 
+  /// Fmt carries no day-month-with-time pattern, so this one stays local —
+  /// but built once, not rebuilt for every row on every frame as the old
+  /// body did. DateFormat parses its pattern and loads the locale's symbols
+  /// on construction.
+  static final DateFormat _stamp = DateFormat('dd MMM, h:mm a');
+
   static String _date(String raw) {
     final parsed = DateTime.tryParse(raw);
     if (parsed == null) return raw;
-    return DateFormat('dd MMM, h:mm a').format(parsed.toLocal());
+    return _stamp.format(parsed.toLocal());
   }
 }
 
@@ -1202,9 +1366,7 @@ class _EntrySheetState extends State<_EntrySheet> {
                 onPressed: _submit,
                 style: FilledButton.styleFrom(backgroundColor: _accent),
                 child: Text(
-                  amount > 0
-                      ? 'Add ${NumberFormat('#,##0').format(amount)} Ks'
-                      : 'Add',
+                  amount > 0 ? 'Add ${Fmt.money.format(amount)} Ks' : 'Add',
                 ),
               ),
             ],

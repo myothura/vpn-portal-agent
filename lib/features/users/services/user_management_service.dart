@@ -1,10 +1,11 @@
+// AGENT_APP_F2 — foundation was imported for debugPrint alone, which is now
+// AppLog.e; left in place the import would be reported as unused.
 import 'package:dio/dio.dart';
-import 'package:flutter/foundation.dart';
 import 'package:vpn_agent_app/core/api/api_client.dart';
 import 'package:vpn_agent_app/core/api/api_config.dart';
+import 'package:vpn_agent_app/core/utils/app_log.dart';
 import 'package:vpn_agent_app/features/users/models/plan_model.dart';
 import 'package:vpn_agent_app/features/users/models/vpn_user_model.dart';
-import 'package:vpn_agent_app/core/utils/app_log.dart';
 
 class UserManagementService {
   final Dio _dio = ApiClient().dio;
@@ -34,6 +35,12 @@ class UserManagementService {
     } on DioException catch (e) {
       AppLog.e('users', 'Failed to get VPN users: ${e.response?.data}');
       return null;
+    } catch (e) {
+      // AGENT_APP_F2 — Dio covers the network only. A FormatException from a
+      // truncated body or a TypeError out of VpnUserResponse.fromJson used to
+      // escape to the caller unhandled. Same null the branch above returns.
+      AppLog.e('users', 'Failed to read VPN users: $e');
+      return null;
     }
   }
 
@@ -47,6 +54,11 @@ class UserManagementService {
       return [];
     } on DioException catch (e) {
       AppLog.e('users', 'Failed to load plans: $e');
+      return [];
+    } catch (e) {
+      // AGENT_APP_F2 — Plan.fromJson throws on an unexpected shape; an empty
+      // list is what the caller already handles.
+      AppLog.e('users', 'Failed to read plans: $e');
       return [];
     }
   }
@@ -69,6 +81,11 @@ class UserManagementService {
       return [];
     } on DioException catch (e) {
       AppLog.e('users', 'Failed to load business plans: $e');
+      return [];
+    } catch (e) {
+      // AGENT_APP_F2 — same as plans: a parse failure is an empty list, not
+      // an unhandled error on the caller's side.
+      AppLog.e('users', 'Failed to read business plans: $e');
       return [];
     }
   }
@@ -151,6 +168,11 @@ class UserManagementService {
           ? (e.response!.data['message'] ?? 'Network error')
           : 'Network error';
       return {'success': false, 'message': msg};
+    } catch (e) {
+      // AGENT_APP_F2 — an HTML error page makes response.data a String, and
+      // indexing ['message'] into it threw straight past the Dio handler.
+      AppLog.e('users', 'Assign business plan failed: $e');
+      return {'success': false, 'message': 'Network error'};
     }
   }
 
@@ -174,6 +196,10 @@ class UserManagementService {
           ? (e.response!.data['message'] ?? 'Network error')
           : 'Network error';
       return {'success': false, 'message': msg};
+    } catch (e) {
+      // AGENT_APP_F2 — as with assign: the body is not always a Map.
+      AppLog.e('users', 'Remove business plan failed: $e');
+      return {'success': false, 'message': 'Network error'};
     }
   }
 
@@ -196,7 +222,7 @@ class UserManagementService {
         maxSlots: int.tryParse(data['max_device_limit'].toString()) ?? 5,
       );
     } catch (e) {
-      debugPrint('Slot settings failed: $e');
+      AppLog.e('users', 'Slot settings failed: $e');
       return null;
     }
   }

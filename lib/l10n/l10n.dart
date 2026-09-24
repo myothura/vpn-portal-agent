@@ -8,16 +8,21 @@ class L10n {
     const Locale('zh'),
   ];
 
-  static String getFlag(String code) {
+  /// AGENT_APP_G2_FLAGS — the two-letter language code, not a flag.
+  ///
+  /// A flag stands for a country, not a language, and this one was about to
+  /// become visible: the picker had never been placed on a screen until the
+  /// profile screen started opening it.
+  static String getCode(String code) {
     switch (code) {
       case 'en':
-        return '🇬🇧';
+        return 'EN';
       case 'my':
-        return '🇲🇲';
+        return 'MY';
       case 'zh':
-        return '🇨🇳';
+        return 'ZH';
       default:
-        return '🏳️';
+        return code.toUpperCase();
     }
   }
 }

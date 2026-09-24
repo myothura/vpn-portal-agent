@@ -30,24 +30,25 @@ class ProfitLossSummary {
   double get margin => revenueTotal == 0 ? 0 : (profit / revenueTotal) * 100;
 
   factory ProfitLossSummary.fromJson(Map<String, dynamic> json) {
-    final revenue = json['revenue'] as Map<String, dynamic>? ?? {};
-    final expense = json['expense'] as Map<String, dynamic>? ?? {};
-    final manual = revenue['manual'] as Map<String, dynamic>? ?? {};
+    // AGENT_APP_F1 — PHP encodes an empty associative array as [], so these
+    // casts threw on a month with no revenue instead of reporting zero. The
+    // local asInt moved to the file-level _int, which the rest of the file
+    // now shares.
+    final revenue = _map(json['revenue']) ?? const <String, dynamic>{};
+    final expense = _map(json['expense']) ?? const <String, dynamic>{};
+    final manual = _map(revenue['manual']) ?? const <String, dynamic>{};
 
-    int asInt(dynamic v) =>
-        v is int ? v : int.tryParse(v?.toString() ?? '0') ?? 0;
-
-    final topup = asInt(revenue['topup_cash']);
-    final direct = asInt(revenue['direct_sale']);
-    final manualTotal = asInt(manual['total']);
+    final topup = _int(revenue['topup_cash']);
+    final direct = _int(revenue['direct_sale']);
+    final manualTotal = _int(manual['total']);
 
     return ProfitLossSummary(
       topupCash: topup,
       directSale: direct,
       manualRevenue: manualTotal,
-      revenueTotal: asInt(revenue['total']),
-      expenseTotal: asInt(expense['total']),
-      profit: asInt(json['profit']),
+      revenueTotal: _int(revenue['total']),
+      expenseTotal: _int(expense['total']),
+      profit: _int(json['profit']),
       // The two computed lines are listed alongside the manual ones so the
       // breakdown adds up to the total shown above it.
       revenueLines: [
@@ -72,14 +73,7 @@ class PlLine {
   static List<PlLine> listFrom(dynamic raw) {
     if (raw is! Map) return const [];
     final lines = raw.entries
-        .map(
-          (e) => PlLine(
-            name: e.key.toString(),
-            total: e.value is int
-                ? e.value as int
-                : int.tryParse(e.value?.toString() ?? '0') ?? 0,
-          ),
-        )
+        .map((e) => PlLine(name: e.key.toString(), total: _int(e.value)))
         .toList();
     // Largest first: a breakdown is read to find where the money went.
     lines.sort((a, b) => b.total.compareTo(a.total));
@@ -141,16 +135,12 @@ class DirectSale {
   }
 
   factory DirectSale.fromJson(Map<String, dynamic> json, Set<int> excludedIds) {
-    final id = json['id'] is int
-        ? json['id'] as int
-        : int.tryParse(json['id']?.toString() ?? '0') ?? 0;
+    final id = _int(json['id']);
     final description = (json['description'] ?? '').toString();
 
     return DirectSale(
       id: id,
-      amount: json['amount'] is int
-          ? json['amount'] as int
-          : int.tryParse(json['amount']?.toString() ?? '0') ?? 0,
+      amount: _int(json['amount']),
       description: description,
       username: _usernameFrom(description),
       action: _actionFrom(description),
@@ -182,9 +172,9 @@ class TopupRow {
 
   factory TopupRow.fromJson(Map<String, dynamic> json) {
     return TopupRow(
-      id: json['id'] ?? 0,
-      amount: json['amount'] ?? 0,
-      cashReceived: json['cash_received'] ?? 0,
+      id: _int(json['id']),
+      amount: _int(json['amount']),
+      cashReceived: _int(json['cash_received']),
       bonusPercent:
           double.tryParse(json['bonus_percent']?.toString() ?? '0') ?? 0,
       agentName: json['agent_name']?.toString(),
@@ -216,13 +206,11 @@ class FinanceEntry {
 
   factory FinanceEntry.fromJson(Map<String, dynamic> json) {
     return FinanceEntry(
-      id: json['id'] ?? 0,
+      id: _int(json['id']),
       direction: (json['direction'] ?? 'expense').toString(),
       category: (json['category'] ?? '').toString(),
       name: (json['name'] ?? '').toString(),
-      amount: json['amount_mmk'] is int
-          ? json['amount_mmk'] as int
-          : int.tryParse(json['amount_mmk']?.toString() ?? '0') ?? 0,
+      amount: _int(json['amount_mmk']),
       entryDate: json['entry_date']?.toString(),
     );
   }
@@ -253,38 +241,78 @@ class ProfitLossReport {
   });
 
   factory ProfitLossReport.fromJson(Map<String, dynamic> json) {
-    final direct = json['direct_sales'] as Map<String, dynamic>? ?? {};
-    final excluded = ((direct['excluded_ids'] as List?) ?? [])
-        .map((e) => e is int ? e : int.tryParse(e.toString()) ?? 0)
-        .toSet();
+    final direct = _map(json['direct_sales']) ?? const <String, dynamic>{};
+    final rawExcluded = direct['excluded_ids'];
+    final List<dynamic> excludedList = rawExcluded is List
+        ? rawExcluded
+        : const <dynamic>[];
+    final excluded = excludedList.map((e) => _int(e)).toSet();
+
+    final rawMonths = json['months'];
+    final List<dynamic> months = rawMonths is List
+        ? rawMonths
+        : const <dynamic>[];
+    final rawSales = direct['data'];
+    final List<dynamic> sales = rawSales is List ? rawSales : const <dynamic>[];
+    final rawTopups = json['topups'];
+    final List<dynamic> topups = rawTopups is List
+        ? rawTopups
+        : const <dynamic>[];
+    final rawEntries = json['entries'];
+    final List<dynamic> entries = rawEntries is List
+        ? rawEntries
+        : const <dynamic>[];
 
     return ProfitLossReport(
       month: (json['month'] ?? '').toString(),
-      months: ((json['months'] as List?) ?? [])
-          .map((e) => e.toString())
-          .toList(),
+      months: months.map((e) => e.toString()).toList(),
       summary: ProfitLossSummary.fromJson(
-        json['summary'] as Map<String, dynamic>? ?? {},
+        _map(json['summary']) ?? const <String, dynamic>{},
       ),
-      directSales: ((direct['data'] as List?) ?? [])
+      directSales: sales
+          .whereType<Map>()
           .map(
-            (e) => DirectSale.fromJson(
-              Map<String, dynamic>.from(e as Map),
-              excluded,
-            ),
+            (e) => DirectSale.fromJson(Map<String, dynamic>.from(e), excluded),
           )
           .toList(),
-      directSalesTotal: direct['total'] ?? 0,
-      directSalesPage: direct['current_page'] ?? 1,
-      directSalesLastPage: direct['last_page'] ?? 1,
-      topups: ((json['topups'] as List?) ?? [])
-          .map((e) => TopupRow.fromJson(Map<String, dynamic>.from(e as Map)))
+      // AGENT_APP_F1 — the paging block is built by the paginator and its
+      // counters arrive as strings from this endpoint.
+      directSalesTotal: _int(direct['total']),
+      directSalesPage: _int(direct['current_page'], 1),
+      directSalesLastPage: _int(direct['last_page'], 1),
+      topups: topups
+          .whereType<Map>()
+          .map((e) => TopupRow.fromJson(Map<String, dynamic>.from(e)))
           .toList(),
-      entries: ((json['entries'] as List?) ?? [])
-          .map(
-            (e) => FinanceEntry.fromJson(Map<String, dynamic>.from(e as Map)),
-          )
+      entries: entries
+          .whereType<Map>()
+          .map((e) => FinanceEntry.fromJson(Map<String, dynamic>.from(e)))
           .toList(),
     );
   }
+}
+
+// ── Tolerant JSON readers ─────────────────────────────────────────────────
+//
+// The backend is PHP: a numeric column arrives as 5000 from one endpoint and
+// as "5000" from another, and as null where a join missed. A direct cast or a
+// bare int.parse throws inside fromJson, and one bad row then fails the whole
+// page of otherwise good rows. These take whatever arrived and fall back to
+// the value the previous code produced for well-formed input.
+
+int _int(Object? v, [int fallback = 0]) {
+  if (v is int) return v;
+  if (v is num) return v.toInt();
+  if (v is bool) return v ? 1 : 0;
+  if (v is String) {
+    final s = v.trim();
+    return int.tryParse(s) ?? double.tryParse(s)?.toInt() ?? fallback;
+  }
+  return fallback;
+}
+
+Map<String, dynamic>? _map(Object? v) {
+  if (v is Map<String, dynamic>) return v;
+  if (v is Map) return Map<String, dynamic>.from(v);
+  return null;
 }

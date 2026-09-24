@@ -8,6 +8,7 @@ import 'package:vpn_agent_app/core/navigation/app_transitions.dart';
 import 'package:vpn_agent_app/core/services/agent_realtime_service.dart';
 import 'package:vpn_agent_app/core/theme/app_colors.dart';
 import 'package:vpn_agent_app/core/theme/app_theme.dart';
+import 'package:vpn_agent_app/core/widgets/confirm_dialog.dart';
 import 'package:vpn_agent_app/shared_widgets/ui/app_surface.dart';
 
 import 'package:vpn_agent_app/features/chat/screens/agent_chat_detail_screen.dart';
@@ -30,6 +31,10 @@ class _AgentChatListScreenState extends State<AgentChatListScreen> {
 
   bool _loading = true;
   bool _loadingMore = false;
+
+  /// LIST_FAILURE_STATE_V1 — the last load came back empty-handed and there
+  /// is nothing on screen. Distinct from having no conversations at all.
+  bool _failed = false;
   bool _selfRenewal = false;
   bool _isAdmin = false;
   bool _searchOpen = false;
@@ -136,6 +141,11 @@ class _AgentChatListScreenState extends State<AgentChatListScreen> {
             .toList();
         _page = result['current_page'] ?? 1;
         _lastPage = result['last_page'] ?? 1;
+        _failed = false;
+      } else {
+        // A failed 45-second poll leaves the rows it has; only a screen with
+        // nothing on it reports the failure.
+        _failed = _users.isEmpty;
       }
       _loading = false;
     });
@@ -228,6 +238,13 @@ class _AgentChatListScreenState extends State<AgentChatListScreen> {
     );
   }
 
+  /// BROADCAST_CONFIRM_V1 — asks before writing into every thread.
+  ///
+  /// This is the least recallable action in the app: each conversation gets a
+  /// real message row and each user gets a push, and the sheet sent all of it
+  /// on one tap of a button labelled "Send". The dialog says how many
+  /// conversations are loaded here, shows the opening of the message, and says
+  /// in as many words that it cannot be taken back.
   Future<void> _broadcast() async {
     final result =
         await showModalBottomSheet<({String target, String message})>(
@@ -236,6 +253,33 @@ class _AgentChatListScreenState extends State<AgentChatListScreen> {
           builder: (_) => _BroadcastSheet(isAdmin: _isAdmin),
         );
     if (result == null || !mounted) return;
+
+    final body = result.message;
+    final preview = body.length > 90 ? '${body.substring(0, 90)}…' : body;
+
+    final confirmed = await confirmAction(
+      context,
+      title: 'စကားပြောခန်းအားလုံးသို့ ပို့မလား',
+      message:
+          'ဤစာကို စကားပြောခန်းတိုင်းသို့ တစ်ပြိုင်နက် ပို့ပါမည်။ '
+          'ဤစာရင်းတွင် မပါသေးသော စကားပြောခန်းများသို့လည်း ရောက်ပါမည်။ '
+          'ပို့ပြီးပါက ပြန်လည် ရုပ်သိမ်း၍ မရပါ။',
+      confirmLabel: 'ပို့မည်',
+      destructive: true,
+      details: [
+        ConfirmDetail(
+          'ဤစာရင်းတွင် ရှိသော စကားပြောခန်း',
+          '${_users.length} ခု',
+          emphasise: true,
+        ),
+        if (result.target == 'expiring')
+          const ConfirmDetail('ရွေးချယ်မှု', 'သက်တမ်းကုန်ခါနီး အသုံးပြုသူများ')
+        else
+          const ConfirmDetail('ရွေးချယ်မှု', 'အသုံးပြုသူအားလုံး'),
+        ConfirmDetail('စာသား', preview),
+      ],
+    );
+    if (!confirmed || !mounted) return;
 
     final ok = await _chatService.broadcastMessage(
       result.message,
@@ -320,7 +364,7 @@ class _AgentChatListScreenState extends State<AgentChatListScreen> {
                   child: _loading
                       ? const _ListSkeleton()
                       : _users.isEmpty
-                      ? _buildEmpty()
+                      ? (_failed ? _buildFailed() : _buildEmpty())
                       : RefreshIndicator(
                           onRefresh: () => _load(silent: true),
                           color: AppColors.accentInk,
@@ -393,6 +437,16 @@ class _AgentChatListScreenState extends State<AgentChatListScreen> {
       subtitle: 'Messages from your users will appear here.',
     );
   }
+
+  /// The list did not load. "No conversations yet" said the opposite, on a
+  /// screen whose whole purpose is telling the agent who is waiting.
+  Widget _buildFailed() => AppEmptyState(
+    icon: Iconsax.cloud_cross,
+    title: 'စကားပြောခန်းများ ဆွဲယူ၍ မရပါ',
+    subtitle: 'အင်တာနက် ချိတ်ဆက်မှုကို စစ်ဆေးပြီး ထပ်မံ ကြိုးစားပါ။',
+    actionLabel: 'ထပ်မံကြိုးစားမည်',
+    onAction: () => _load(),
+  );
 }
 
 // ── Header ────────────────────────────────────────────────────────────────
@@ -734,7 +788,12 @@ class _ChatRow extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         Expanded(child: row),
-        const SizedBox(height: 1),
+        // ROW_DIVIDER_V1 — a SizedBox has no colour, so the separator meant to
+        // sit under each row was a 1px blank gap and the rows ran together.
+        const ColoredBox(
+          color: AppColors.border,
+          child: SizedBox(height: 1, width: double.infinity),
+        ),
       ],
     );
   }

@@ -3,12 +3,17 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:iconsax/iconsax.dart';
-import 'package:intl/intl.dart';
 
 import 'package:vpn_agent_app/core/navigation/app_transitions.dart';
 import 'package:vpn_agent_app/core/theme/app_colors.dart';
 import 'package:vpn_agent_app/core/theme/app_theme.dart';
 import 'package:vpn_agent_app/shared_widgets/ui/app_surface.dart';
+
+// C_LISTS_UM_IMPORTS — intl is gone from this file: the one DateFormat it
+// built sat in a helper called from every row. Fmt holds it now, and
+// confirmAction replaces the delete dialog written out below.
+import '../../../core/utils/formatters.dart';
+import '../../../core/widgets/confirm_dialog.dart';
 
 import 'package:vpn_agent_app/features/users/models/vpn_user_model.dart';
 import 'package:vpn_agent_app/features/users/screens/add_user_screen.dart';
@@ -52,7 +57,9 @@ class _Expiry {
       final e = DateTime(expiry.year, expiry.month, expiry.day);
       final n = DateTime(now.year, now.month, now.day);
       final days = e.difference(n).inDays;
-      final formatted = DateFormat('dd MMM yyyy').format(expiry);
+      // C_LISTS_UM_EXPIRYFMT — Fmt.date is the same pattern, built once. This
+      // line runs for every visible row on every frame.
+      final formatted = Fmt.date.format(expiry);
 
       if (n.isAfter(e)) {
         return _Expiry(
@@ -133,6 +140,18 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
   int _page = 1;
   int _lastPage = 1;
 
+  /// C_LISTS_UM_FAILSTATE — the request itself failed, as opposed to coming
+  /// back with nothing in it. Both used to land on the same "no users yet"
+  /// panel, so a dropped connection read as an empty account and the only way
+  /// out of it was to guess that pulling down might help.
+  bool _loadFailed = false;
+
+  /// Whether the search field currently holds anything.
+  ///
+  /// build() needs this and cannot read the controller for it — see the
+  /// listener in initState.
+  bool _searchHasText = false;
+
   /// Accounts lapsing within seven days, fetched separately from the main
   /// list. They cannot be derived from what is on screen: the list is
   /// paginated and filtered, so an account expiring tomorrow may sit on page
@@ -161,6 +180,15 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
     super.initState();
     _filter = widget.initialFilter;
     _searchController.addListener(_onSearchChanged);
+    // C_LISTS_UM_FIELDLISTENER — build() reads the search controller to decide
+    // what the field's trailing button does, and the only listener on it was
+    // _onSearchChanged, which is debounced by 400ms and returns early when the
+    // text has not changed since the last query. So between the first
+    // keystroke and the debounce firing, build had never re-run: the cross
+    // still carried the empty-field action, and tapping it closed search
+    // instead of clearing what had just been typed. This keeps that one piece
+    // of derived state in step, and dispose takes it off again.
+    _searchController.addListener(_onSearchFieldChanged);
     // Pages load as the list reaches its end. The previous screen made the
     // agent tap a "Load More" button at the bottom of every page — with
     // thousands of users that is a tap per fifty rows.
@@ -172,10 +200,20 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
   @override
   void dispose() {
     _debounce?.cancel();
+    _searchController.removeListener(_onSearchFieldChanged);
+    _scrollController.removeListener(_onScroll);
     _searchController.dispose();
     _searchFocus.dispose();
     _scrollController.dispose();
     super.dispose();
+  }
+
+  /// Rebuilds only when the field crosses between empty and not empty, so this
+  /// costs one setState per transition rather than one per keystroke.
+  void _onSearchFieldChanged() {
+    final hasText = _searchController.text.isNotEmpty;
+    if (hasText == _searchHasText) return;
+    setState(() => _searchHasText = hasText);
   }
 
   void _onScroll() {
@@ -244,6 +282,10 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
     if (!mounted) return;
 
     setState(() {
+      // C_LISTS_UM_LOADFAIL — a null response is the service saying the
+      // request did not come back. Recorded, rather than leaving the list as
+      // it was and letting the empty state speak for it.
+      _loadFailed = response == null;
       if (response != null) {
         // Appended in server order, never re-sorted. Sorting the accumulated
         // list on every page meant page two's rows interleaved into page one,
@@ -309,38 +351,12 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
     if (created == true) _refreshAll();
   }
 
-  Future<void> _confirmDelete(VpnUser user) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        icon: const AppIconBadge(
-          icon: Iconsax.trash,
-          color: AppColors.danger,
-          background: AppColors.dangerWash,
-          size: 22,
-          padding: 12,
-        ),
-        title: const Text('Remove this user?'),
-        content: Text(
-          "'${user.username}' will lose access immediately. This cannot be undone.",
-          style: Theme.of(ctx).textTheme.bodyMedium,
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: AppColors.danger),
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Remove'),
-          ),
-        ],
-      ),
-    );
-
-    if (confirmed != true) return;
-
+  /// C_LISTS_UM_DELETE — no dialog here any more.
+  ///
+  /// The asking moved into the swipe's confirmDismiss, where confirmAction
+  /// names the account and the plan before the tap. Leaving this one in place
+  /// as well would have meant two dialogs for one gesture.
+  Future<void> _deleteUser(VpnUser user) async {
     final ok = await _userService.deleteUser(user.id);
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
@@ -398,16 +414,17 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                             size: 17,
                             color: AppColors.textTertiary,
                           ),
-                          suffixIcon: _searchController.text.isEmpty
+                          // C_LISTS_UM_SUFFIX — reads the tracked flag, not
+                          // the controller, so it is right from the first
+                          // keystroke rather than from whenever the debounce
+                          // last happened to rebuild this.
+                          suffixIcon: _searchHasText
                               ? IconButton(
-                                  icon: const Icon(
-                                    Iconsax.close_circle,
-                                    size: 18,
-                                    color: AppColors.textTertiary,
+                                  tooltip: 'ရှာဖွေမှုကို ရှင်းမည်',
+                                  constraints: const BoxConstraints(
+                                    minWidth: 48,
+                                    minHeight: 48,
                                   ),
-                                  onPressed: _toggleSearch,
-                                )
-                              : IconButton(
                                   icon: const Icon(
                                     Iconsax.close_circle,
                                     size: 18,
@@ -418,6 +435,19 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                                     setState(() => _query = '');
                                     _load(refresh: true);
                                   },
+                                )
+                              : IconButton(
+                                  tooltip: 'ရှာဖွေမှုကို ပိတ်မည်',
+                                  constraints: const BoxConstraints(
+                                    minWidth: 48,
+                                    minHeight: 48,
+                                  ),
+                                  icon: const Icon(
+                                    Iconsax.close_circle,
+                                    size: 18,
+                                    color: AppColors.textTertiary,
+                                  ),
+                                  onPressed: _toggleSearch,
                                 ),
                         ),
                       ),
@@ -435,7 +465,12 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                 onSeeAll: () => _onFilterChanged('expiring'),
               ),
             SizedBox(
-              height: 36,
+              // C_LISTS_UM_CHIPSCALE — the strip is horizontal, so it has to be
+              // given a height; that height is derived from the label rather
+              // than written down as 36. A 12pt line at 1.35 plus 10 of padding
+              // above and below is 36 at the default text size and grows with
+              // it, instead of cutting the chip labels off from about 1.2x up.
+              height: MediaQuery.textScalerOf(context).scale(12) * 1.35 + 20,
               child: ListView.separated(
                 scrollDirection: Axis.horizontal,
                 padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -459,7 +494,11 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
               child: _isLoading
                   ? const _ListSkeleton()
                   : _users.isEmpty
-                  ? _buildEmpty()
+                  // C_LISTS_UM_EMPTYSPLIT — a failed request and an empty
+                  // account are not the same screen. One offers a retry; the
+                  // other offers the thing you would do next if the account
+                  // really has no users in it.
+                  ? (_loadFailed ? _buildLoadError() : _buildEmpty())
                   : RefreshIndicator(
                       onRefresh: _refreshAll,
                       color: AppColors.accent,
@@ -491,7 +530,9 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                               key: ValueKey(user.id),
                               user: user,
                               onTap: () => _openUser(user),
-                              onDelete: () => _confirmDelete(user),
+                              // C_LISTS_UM_ROWDELETE — straight to the delete.
+                              // The swipe has already asked.
+                              onDelete: () => _deleteUser(user),
                             );
                           },
                         ),
@@ -578,6 +619,18 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
       subtitle: 'Add your first user to get started.',
       actionLabel: 'Add user',
       onAction: _addUser,
+    );
+  }
+
+  /// C_LISTS_UM_ERRORSTATE — shown when the list request failed, in place of
+  /// the empty panel that used to stand in for both.
+  Widget _buildLoadError() {
+    return AppEmptyState(
+      icon: Iconsax.warning_2,
+      title: 'စာရင်း ဆွဲယူ၍ မရပါ',
+      subtitle: 'အင်တာနက် ချိတ်ဆက်မှုကို စစ်ဆေးပြီး ထပ်မံကြိုးစားပါ။',
+      actionLabel: 'ပြန်ကြိုးစားမည်',
+      onAction: _refreshAll,
     );
   }
 }
@@ -706,25 +759,41 @@ class _UserRow extends StatelessWidget {
     // is invisible until someone happens to try it, whereas a swipe reveals
     // its own affordance the moment a finger moves sideways.
     //
-    // confirmDismiss always returns false. The row is never removed by the
-    // gesture itself — the delete call reloads the list, and letting
-    // Dismissible also drop it would assert on the next build when the item
-    // count had not yet changed.
+    // C_LISTS_UM_DISMISS — right-to-left only. DismissDirection.horizontal
+    // also claimed a drag begun at the left screen edge, which is where
+    // Android's system back gesture starts: on a gesture-navigation phone the
+    // two fought over every attempt to leave this screen, and whichever row
+    // happened to be under the thumb offered to delete itself instead.
+    //
+    // confirmDismiss does the asking and still always returns false. The row
+    // is never removed by the gesture itself — the delete call reloads the
+    // list, and letting Dismissible also drop it would assert on the next
+    // build, when the item count had not yet changed.
     final dismissible = Dismissible(
       key: ValueKey('dismiss-${user.id}'),
-      // Both directions: an agent reaching one-handed swipes whichever way
-      // their thumb naturally travels, and having only one work reads as the
-      // gesture being broken.
-      direction: DismissDirection.horizontal,
+      direction: DismissDirection.endToStart,
       confirmDismiss: (_) async {
-        onDelete();
+        final confirmed = await confirmAction(
+          context,
+          title: 'ဤအသုံးပြုသူကို ဖယ်ရှားမလား',
+          message:
+              'ဖယ်ရှားလိုက်ပါက ချက်ချင်း ချိတ်ဆက်မှု ပြတ်တောက်သွားပြီး '
+              'ပြန်လည် ပြင်ဆင်၍ မရနိုင်ပါ။',
+          confirmLabel: 'ဖယ်ရှားမည်',
+          destructive: true,
+          details: [
+            ConfirmDetail('အသုံးပြုသူ', user.username, emphasise: true),
+            ConfirmDetail('အစီအစဉ်', user.planName ?? 'မရှိပါ'),
+          ],
+        );
+        if (confirmed) onDelete();
         return false;
       },
-      // background is what shows on a left-to-right swipe, secondaryBackground
-      // on right-to-left; the label hugs the edge the row is pulling away
-      // from so it appears from under the finger.
-      background: const _SwipeAction(alignment: Alignment.centerLeft),
-      secondaryBackground: const _SwipeAction(alignment: Alignment.centerRight),
+      // One direction, so one panel: Dismissible shows background when no
+      // secondaryBackground is given, whichever way the row is pulled. The
+      // label hugs the edge the row is pulling away from, so it appears from
+      // under the finger.
+      background: const _SwipeAction(alignment: Alignment.centerRight),
       child: row,
     );
 
@@ -825,10 +894,15 @@ class _UrgentStrip extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 12),
-                // Height is set from the parts: 48 ring + 4 gap + two 12pt lines.
-                // The previous 78 clipped the portrait once it replaced a letter.
+                // C_LISTS_UM_URGENTSCALE — 52 of avatar ring plus 5 of gap,
+                // then the two 10pt caption lines, scaled. The flat 84 this
+                // replaces is exactly what that works out to at the default
+                // text size and at no size above it: at 1.3x the username line
+                // underneath the portrait was cut in half.
                 SizedBox(
-                  height: 84,
+                  height:
+                      57 +
+                      MediaQuery.textScalerOf(context).scale(10) * 1.35 * 2,
                   child: ListView.separated(
                     scrollDirection: Axis.horizontal,
                     // Clipped: Clip.none let avatars scroll on past the card's
@@ -1126,8 +1200,37 @@ class _FilterChip extends StatelessWidget {
   }
 }
 
-class _ListSkeleton extends StatelessWidget {
+/// C_LISTS_UM_SKELETON — one ticker for the whole placeholder list.
+///
+/// AppSkeleton owns an AnimationController each, and eight rows of three bars
+/// meant twenty-four controllers, twenty-four tickers and twenty-four copies
+/// of the same 1200ms sweep, all running while the screen waited for its first
+/// page. One controller lives here and every bar listens to it.
+class _ListSkeleton extends StatefulWidget {
   const _ListSkeleton();
+
+  @override
+  State<_ListSkeleton> createState() => _ListSkeletonState();
+}
+
+class _ListSkeletonState extends State<_ListSkeleton>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _shimmer;
+
+  @override
+  void initState() {
+    super.initState();
+    _shimmer = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1200),
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _shimmer.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1138,12 +1241,12 @@ class _ListSkeleton extends StatelessWidget {
       physics: const NeverScrollableScrollPhysics(),
       itemExtent: _UserRow.heightFor(context),
       itemCount: 8,
-      itemBuilder: (_, __) => const Padding(
-        padding: EdgeInsets.fromLTRB(16, 10, 12, 9),
+      itemBuilder: (_, __) => Padding(
+        padding: const EdgeInsets.fromLTRB(16, 10, 12, 9),
         child: Row(
           children: [
-            AppSkeleton(width: 44, height: 44, radius: 22),
-            SizedBox(width: 12),
+            _SkeletonBar(_shimmer, width: 44, height: 44, radius: 22),
+            const SizedBox(width: 12),
             Expanded(
               // Two bars, matching the real row's two text lines. A third bar
               // was 21px of content the row's height never allowed for, so
@@ -1152,14 +1255,63 @@ class _ListSkeleton extends StatelessWidget {
                 mainAxisAlignment: MainAxisAlignment.center,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  AppSkeleton(width: 130, height: 13),
-                  SizedBox(height: 6),
-                  AppSkeleton(width: 170, height: 11),
+                  _SkeletonBar(_shimmer, width: 130, height: 13),
+                  const SizedBox(height: 6),
+                  _SkeletonBar(_shimmer, width: 170, height: 11),
                 ],
               ),
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// One placeholder bar, painting from an animation it does not own.
+///
+/// The RepaintBoundary is what the per-bar controller was really buying: only
+/// the bar repaints per frame, not the list behind it. That part is kept; the
+/// ticker is not.
+class _SkeletonBar extends StatelessWidget {
+  final Animation<double> shimmer;
+  final double? width;
+  final double height;
+  final double radius;
+
+  const _SkeletonBar(
+    this.shimmer, {
+    this.width,
+    this.height = 14,
+    this.radius = 6,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return RepaintBoundary(
+      child: AnimatedBuilder(
+        animation: shimmer,
+        builder: (context, _) {
+          // The gradient slides across a fixed box rather than the box moving,
+          // so nothing is laid out again per frame.
+          final t = shimmer.value * 2 - 1;
+          return Container(
+            width: width,
+            height: height,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(radius),
+              gradient: LinearGradient(
+                begin: Alignment(-1 + t, 0),
+                end: Alignment(1 + t, 0),
+                colors: const [
+                  AppColors.surfaceAlt,
+                  AppColors.border,
+                  AppColors.surfaceAlt,
+                ],
+              ),
+            ),
+          );
+        },
       ),
     );
   }

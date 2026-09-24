@@ -1,4 +1,6 @@
 // File: lib/features/scaffold/main_scaffold.dart
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:iconsax/iconsax.dart';
@@ -61,7 +63,8 @@ class MainScaffold extends StatefulWidget {
   State<MainScaffold> createState() => _MainScaffoldState();
 }
 
-class _MainScaffoldState extends State<MainScaffold> {
+class _MainScaffoldState extends State<MainScaffold>
+    with WidgetsBindingObserver {
   int _selectedIndex = 0;
 
   /// Chat is permission-gated, so the tab list is built at runtime. Null until
@@ -92,9 +95,21 @@ class _MainScaffoldState extends State<MainScaffold> {
   /// Broadcasts which tab is on screen. See MainShell.visibleTab.
   final ValueNotifier<String> _visibleTab = ValueNotifier('Dashboard');
 
+  /// CHAT_DEBOUNCE_D — coalesces a burst of chat messages into one reload.
+  ///
+  /// Every incoming message queued a DashboardRefreshed, so a live
+  /// conversation turned ten messages into ten full fetches of
+  /// /agent/dashboard, each emitting a Loading state that the nav bar and the
+  /// page both rebuilt for. The badge has to be right a few seconds after a
+  /// message lands, not in the same frame as it.
+  Timer? _chatRefreshDebounce;
+
+  static const Duration _chatRefreshDelay = Duration(seconds: 4);
+
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _dashboardBloc = DashboardBloc(repository: DashboardRepository())
       ..add(DashboardStarted());
     _loadPermissions();
@@ -106,10 +121,31 @@ class _MainScaffoldState extends State<MainScaffold> {
     AgentRealtimeService.instance.addListener(_onChatMessage);
   }
 
+  /// LIFECYCLE_SHELL_D — the dashboard poll ran whether or not anyone could
+  /// see it. Paused with the app it costs nothing while backgrounded, and
+  /// resuming fetches once, so the agent does not come back to a figure that
+  /// has been frozen for however long the app was away.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    if (state == AppLifecycleState.resumed) {
+      _dashboardBloc.resumePolling();
+    } else {
+      _dashboardBloc.pausePolling();
+    }
+  }
+
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _chatRefreshDebounce?.cancel();
     _visibleTab.dispose();
     AgentRealtimeService.instance.removeListener(_onChatMessage);
+    // The socket and its reconnect loop belong to the signed-in session.
+    // stop() was called from nowhere in the app, and logout replaces this
+    // whole route, so the channel stayed open and the retry timer kept
+    // walking the backup hosts with a token that had just been deleted.
+    unawaited(AgentRealtimeService.instance.stop());
     _dashboardBloc.close();
     super.dispose();
   }
@@ -123,7 +159,11 @@ class _MainScaffoldState extends State<MainScaffold> {
     final sender = event['sender_type']?.toString();
     if (sender != null && sender != 'user') return;
 
-    _dashboardBloc.add(DashboardRefreshed());
+    _chatRefreshDebounce?.cancel();
+    _chatRefreshDebounce = Timer(_chatRefreshDelay, () {
+      if (!mounted) return;
+      _dashboardBloc.add(DashboardRefreshed());
+    });
   }
 
   Future<void> _loadPermissions() async {

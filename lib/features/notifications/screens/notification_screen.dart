@@ -1,7 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:iconsax/iconsax.dart';
-import 'package:intl/intl.dart';
+
+// C_LISTS_NS_IMPORTS — Fmt replaces a DateFormat built per row; AppLog carries
+// the page-fetch failure this screen now has to tell apart from an empty page.
+import '../../../core/utils/app_log.dart';
+import '../../../core/utils/formatters.dart';
 
 import 'package:vpn_agent_app/core/api/api_client.dart';
 import 'package:vpn_agent_app/core/api/api_config.dart';
@@ -31,7 +35,20 @@ class _NotificationScreenState extends State<NotificationScreen> {
   bool _loadingMore = false;
   bool _canSendNoti = false;
   int _page = 1;
+
+  /// C_LISTS_NS_STATE — cleared only when the server has answered with an
+  /// empty page. A failed request no longer clears it: a timeout is not the
+  /// end of the list, and treating it as one is what stopped older
+  /// notifications arriving for the rest of the session.
   bool _hasMore = true;
+
+  /// The first page could not be fetched. A different screen from "there is
+  /// nothing here", with a different thing to offer.
+  bool _loadFailed = false;
+
+  /// A later page could not be fetched. The cursor is kept and the end of the
+  /// list carries a retry, rather than the list quietly going still.
+  bool _pageFailed = false;
 
   int get _unread => _items.where((n) => !n.isRead).length;
 
@@ -72,39 +89,96 @@ class _NotificationScreenState extends State<NotificationScreen> {
     if (p.pixels >= p.maxScrollExtent - 600) _loadMore();
   }
 
+  /// C_LISTS_NS_FETCH — one page, or null when the request failed.
+  ///
+  /// NotificationListService.getNotifications returns an empty list for both
+  /// "the server has no more rows" and "the call threw", which is exactly the
+  /// distinction this screen needs and cannot recover afterwards. The read is
+  /// made here, next to the profile request already being made directly above.
+  /// Every write still goes through the service.
+  Future<List<NotificationModel>?> _fetchPage(int page) async {
+    try {
+      final response = await ApiClient().dio.get(
+        '/agent/notifications?page=$page',
+      );
+      if (response.statusCode != 200) return null;
+
+      final body = response.data;
+      List<dynamic> raw = const [];
+      if (body is Map && body['data'] is List) {
+        raw = body['data'] as List<dynamic>;
+      } else if (body is List) {
+        raw = body;
+      }
+      return raw
+          .map((e) => NotificationModel.fromJson(Map<String, dynamic>.from(e)))
+          .toList();
+    } catch (error) {
+      AppLog.e('NotificationScreen._fetchPage', error);
+      return null;
+    }
+  }
+
   Future<void> _load({bool refresh = false}) async {
     if (refresh) {
       setState(() {
         _loading = true;
         _page = 1;
         _hasMore = true;
+        _loadFailed = false;
+        _pageFailed = false;
         _items = [];
       });
     }
 
-    final data = await _service.getNotifications(page: _page);
+    final data = await _fetchPage(_page);
     if (!mounted) return;
 
     setState(() {
-      // Deduplicated by id: a row arriving while paging can otherwise appear
-      // on two pages and the list would carry it twice.
-      final merged = <String, NotificationModel>{
-        for (final n in refresh ? <NotificationModel>[] : _items) n.id: n,
-        for (final n in data) n.id: n,
-      };
-      _items = merged.values.toList()
-        ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
-      _hasMore = data.isNotEmpty;
+      if (data == null) {
+        // Nothing already loaded is dropped and _hasMore is left alone, so the
+        // page that failed can be asked for again. Which flag is set decides
+        // whether the agent gets a whole-screen retry or one at the end of the
+        // rows already on screen.
+        if (_items.isEmpty) {
+          _loadFailed = true;
+        } else {
+          _pageFailed = true;
+        }
+      } else {
+        _loadFailed = false;
+        _pageFailed = false;
+        // Deduplicated by id: a row arriving while paging can otherwise appear
+        // on two pages and the list would carry it twice.
+        final merged = <String, NotificationModel>{
+          for (final n in refresh ? <NotificationModel>[] : _items) n.id: n,
+          for (final n in data) n.id: n,
+        };
+        _items = merged.values.toList()
+          ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+        // Only a successful, empty page ends pagination.
+        _hasMore = data.isNotEmpty;
+      }
       _loading = false;
       _loadingMore = false;
     });
   }
 
   Future<void> _loadMore() async {
-    if (_loadingMore || _loading || !_hasMore) return;
+    if (_loadingMore || _loading || !_hasMore || _pageFailed) return;
     setState(() => _loadingMore = true);
     _page++;
     await _load();
+    // The cursor goes back to the page that failed, so a retry asks for that
+    // page rather than the one after it.
+    if (mounted && _pageFailed) _page--;
+  }
+
+  /// Asks for the failed page again, from the button at the end of the list.
+  void _retryPage() {
+    HapticFeedback.selectionClick();
+    setState(() => _pageFailed = false);
+    _loadMore();
   }
 
   // ── Actions ─────────────────────────────────────────────────────────────
@@ -214,11 +288,23 @@ class _NotificationScreenState extends State<NotificationScreen> {
       body: _loading
           ? const _ListSkeleton()
           : _items.isEmpty
-          ? const AppEmptyState(
-              icon: Iconsax.notification,
-              title: 'Nothing here yet',
-              subtitle: 'Renewal requests and alerts will appear here.',
-            )
+          // C_LISTS_NS_BODY — the failed request gets its own panel, with a
+          // way out of it. The empty one still says nothing has arrived yet,
+          // and is now only shown when that is true.
+          ? (_loadFailed
+                ? AppEmptyState(
+                    icon: Iconsax.warning_2,
+                    title: 'အကြောင်းကြားချက်များ ဆွဲယူ၍ မရပါ',
+                    subtitle:
+                        'အင်တာနက် ချိတ်ဆက်မှုကို စစ်ဆေးပြီး ထပ်မံကြိုးစားပါ။',
+                    actionLabel: 'ပြန်ကြိုးစားမည်',
+                    onAction: () => _load(refresh: true),
+                  )
+                : const AppEmptyState(
+                    icon: Iconsax.notification,
+                    title: 'Nothing here yet',
+                    subtitle: 'Renewal requests and alerts will appear here.',
+                  ))
           : RefreshIndicator(
               onRefresh: () => _load(refresh: true),
               color: AppColors.accentInk,
@@ -232,12 +318,18 @@ class _NotificationScreenState extends State<NotificationScreen> {
                 itemCount: _items.length + 1,
                 itemBuilder: (context, i) {
                   if (i == _items.length) {
-                    return _loadingMore
-                        ? const Padding(
-                            padding: EdgeInsets.symmetric(vertical: 20),
-                            child: AppLoader(compact: true),
-                          )
-                        : const SizedBox(height: 16);
+                    // C_LISTS_NS_FOOTER — the end of the list is where a failed
+                    // page is reported and where it is asked for again. Before
+                    // this it reported nothing at all and the list simply
+                    // stopped growing.
+                    if (_loadingMore) {
+                      return const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 20),
+                        child: AppLoader(compact: true),
+                      );
+                    }
+                    if (_pageFailed) return _PageRetry(onRetry: _retryPage);
+                    return const SizedBox(height: 16);
                   }
                   final item = _items[i];
                   return Padding(
@@ -272,6 +364,16 @@ class _NotificationScreenState extends State<NotificationScreen> {
 }
 
 // ── Card ──────────────────────────────────────────────────────────────────
+
+/// Emoji the server writes into notification titles.
+///
+/// C_LISTS_NS_PATTERN — compiled once, at first use. This was constructed
+/// inside _NotificationCard.build, so once per visible card per frame, and a
+/// RegExp compiles its source when it is constructed.
+final RegExp _emojiPattern = RegExp(
+  r'[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\uFE0F]',
+  unicode: true,
+);
 
 /// How a notification is presented, from the type in its payload.
 class _NotificationKind {
@@ -329,17 +431,10 @@ class _NotificationCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = Theme.of(context).textTheme;
-    // The server writes emoji into the title; they duplicate the icon beside
-    // them and break the line height.
-    final title = item.title
-        .replaceAll(
-          RegExp(
-            r'[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\uFE0F]',
-            unicode: true,
-          ),
-          '',
-        )
-        .trim();
+    // C_LISTS_NS_REGEX — the server writes emoji into the title; they
+    // duplicate the icon beside them and break the line height. The pattern
+    // that strips them is at the top of this file now, not built here.
+    final title = item.title.replaceAll(_emojiPattern, '').trim();
     final kind = _NotificationKind.of(title);
 
     return Dismissible(
@@ -456,12 +551,84 @@ class _NotificationCard extends StatelessWidget {
     if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
     if (diff.inHours < 24) return '${diff.inHours}h ago';
     if (diff.inDays < 7) return '${diff.inDays}d ago';
-    return DateFormat('dd MMM yyyy, h:mm a').format(local);
+    // C_LISTS_NS_RELATIVE — Fmt.dateTime is the same pattern, built once.
+    return Fmt.dateTime.format(local);
   }
 }
 
-class _ListSkeleton extends StatelessWidget {
+/// C_LISTS_NS_RETRYWIDGET — the end of the list after a page failed to load.
+///
+/// The flag this replaces ended pagination for the life of the screen: one
+/// timeout and no older notification was ever fetched again, with nothing on
+/// screen to say so. The cursor is kept now, and this is how it is asked for.
+class _PageRetry extends StatelessWidget {
+  final VoidCallback onRetry;
+
+  const _PageRetry({required this.onRetry});
+
+  @override
+  Widget build(BuildContext context) {
+    final t = Theme.of(context).textTheme;
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(0, 14, 0, 26),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            'နောက်ထပ် အကြောင်းကြားချက်များ ဆွဲယူ၍ မရပါ',
+            textAlign: TextAlign.center,
+            style: t.bodySmall?.copyWith(color: AppColors.textTertiary),
+          ),
+          const SizedBox(height: 10),
+          OutlinedButton.icon(
+            onPressed: onRetry,
+            icon: const Icon(Iconsax.refresh_circle, size: 16),
+            label: const Text('ထပ်မံကြိုးစားမည်'),
+            style: OutlinedButton.styleFrom(
+              minimumSize: const Size(148, 48),
+              foregroundColor: AppColors.accentInk,
+              side: const BorderSide(color: AppColors.border),
+              shape: const StadiumBorder(),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// C_LISTS_NS_SKELETON — one ticker for the whole placeholder list.
+///
+/// AppSkeleton owns an AnimationController each; six rows of four bars meant
+/// twenty-four of them, all running the same 1200ms sweep while the screen
+/// waited for its first page. One controller lives here and every bar listens
+/// to it.
+class _ListSkeleton extends StatefulWidget {
   const _ListSkeleton();
+
+  @override
+  State<_ListSkeleton> createState() => _ListSkeletonState();
+}
+
+class _ListSkeletonState extends State<_ListSkeleton>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _shimmer;
+
+  @override
+  void initState() {
+    super.initState();
+    _shimmer = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1200),
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _shimmer.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -470,28 +637,78 @@ class _ListSkeleton extends StatelessWidget {
       physics: const NeverScrollableScrollPhysics(),
       itemCount: 6,
       separatorBuilder: (_, __) => const SizedBox(height: 10),
-      itemBuilder: (_, __) => const AppCard(
-        padding: EdgeInsets.all(14),
+      itemBuilder: (_, __) => AppCard(
+        padding: const EdgeInsets.all(14),
         radius: AppTheme.radiusMd,
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            AppSkeleton(width: 35, height: 35, radius: AppTheme.radiusSm),
-            SizedBox(width: 12),
+            _SkeletonBar(
+              _shimmer,
+              width: 35,
+              height: 35,
+              radius: AppTheme.radiusSm,
+            ),
+            const SizedBox(width: 12),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  AppSkeleton(width: 150, height: 13),
-                  SizedBox(height: 7),
-                  AppSkeleton(width: 210, height: 11),
-                  SizedBox(height: 7),
-                  AppSkeleton(width: 70, height: 10),
+                  _SkeletonBar(_shimmer, width: 150, height: 13),
+                  const SizedBox(height: 7),
+                  _SkeletonBar(_shimmer, width: 210, height: 11),
+                  const SizedBox(height: 7),
+                  _SkeletonBar(_shimmer, width: 70, height: 10),
                 ],
               ),
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// One placeholder bar, painting from an animation it does not own.
+class _SkeletonBar extends StatelessWidget {
+  final Animation<double> shimmer;
+  final double? width;
+  final double height;
+  final double radius;
+
+  const _SkeletonBar(
+    this.shimmer, {
+    this.width,
+    this.height = 14,
+    this.radius = 6,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return RepaintBoundary(
+      child: AnimatedBuilder(
+        animation: shimmer,
+        builder: (context, _) {
+          // The gradient slides across a fixed box rather than the box moving,
+          // so nothing is laid out again per frame.
+          final t = shimmer.value * 2 - 1;
+          return Container(
+            width: width,
+            height: height,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(radius),
+              gradient: LinearGradient(
+                begin: Alignment(-1 + t, 0),
+                end: Alignment(1 + t, 0),
+                colors: const [
+                  AppColors.surfaceAlt,
+                  AppColors.border,
+                  AppColors.surfaceAlt,
+                ],
+              ),
+            ),
+          );
+        },
       ),
     );
   }

@@ -1,5 +1,5 @@
 import 'package:equatable/equatable.dart';
-import 'package:intl/intl.dart';
+import 'package:vpn_agent_app/core/utils/formatters.dart';
 
 /// Equatable so BlocBuilder can tell a genuinely changed poll from an
 /// identical one. The 30s auto-poll emits a fresh DashboardStats object every
@@ -78,18 +78,19 @@ class DashboardStats extends Equatable {
       'recent_requests': recentRequests,
       'pending_request_count': pendingRequestCount,
       'unread_chat_count': unreadChatCount,
+      // fromJson reads this key and toJson never wrote it, so a round trip
+      // through the Hive cache came back with the bell badge at zero and a
+      // cold start showed no unread notifications until the network answered.
+      'unread_notification_count': unreadNotificationCount,
     };
   }
 
-  String get formattedCreditBalance {
-    final formatter = NumberFormat('#,##0');
-    return formatter.format(creditBalance);
-  }
+  /// Both of these are read from build(), and each call was constructing a
+  /// NumberFormat — parsing the pattern, loading the locale symbol table —
+  /// to format one number. Fmt.money is built once, at first use.
+  String get formattedCreditBalance => Fmt.money.format(creditBalance);
 
-  String get formattedCreditsSpent {
-    final formatter = NumberFormat('#,##0');
-    return formatter.format(creditsSpent);
-  }
+  String get formattedCreditsSpent => Fmt.money.format(creditsSpent);
 
   String get greeting {
     final hour = DateTime.now().hour;

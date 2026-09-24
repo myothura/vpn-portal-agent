@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:web_socket_channel/status.dart' as ws_status;
 import 'package:vpn_agent_app/core/services/remote_config_service.dart';
+import 'package:vpn_agent_app/core/utils/app_log.dart';
 import 'package:vpn_agent_app/features/auth/services/auth_service.dart';
 
 /// Realtime chat for the agent app via Laravel Reverb (Pusher protocol).
@@ -203,10 +204,14 @@ class AgentRealtimeService {
           }
           break;
         case 'renewal.new':
+          // RENEWAL_ALWAYS_EMITS — emitted even when the payload is empty.
+          // The renewal listeners do not read this map; they refetch, for the
+          // reason given on addRenewalListener. An empty body is therefore
+          // still the one signal that a request arrived, and the old
+          // isNotEmpty guard dropped it, leaving the pending list a poll
+          // behind for nothing.
           final data = _decodeData(evt['data']);
-          if (data.isNotEmpty) {
-            _emitTo(_renewalListeners, Map<String, dynamic>.from(data));
-          }
+          _emitTo(_renewalListeners, Map<String, dynamic>.from(data));
           break;
         case 'chat.typing':
           final data = _decodeData(evt['data']);
@@ -215,6 +220,11 @@ class AgentRealtimeService {
           }
           break;
         default:
+          // UNHANDLED_EVENT_LOG — a backend that starts broadcasting a new
+          // event name was met with silence here, so the first sign of a
+          // mismatch was a feature quietly doing nothing. AppLog.d is
+          // compiled out of release builds.
+          AppLog.d('AgentRealtime', 'unhandled event: $event');
           break;
       }
     } catch (e) {

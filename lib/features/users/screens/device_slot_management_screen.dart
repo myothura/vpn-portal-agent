@@ -3,11 +3,15 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:iconsax/iconsax.dart';
-import 'package:intl/intl.dart';
 
 import 'package:vpn_agent_app/core/theme/app_colors.dart';
 import 'package:vpn_agent_app/core/theme/app_theme.dart';
 import 'package:vpn_agent_app/shared_widgets/ui/app_surface.dart';
+
+// C_LISTS_DS_IMPORTS — intl is gone: both NumberFormats this file built now
+// point at Fmt, which builds one and keeps it. One of them sat in the price
+// bar's build().
+import '../../../core/utils/formatters.dart';
 
 import 'package:vpn_agent_app/features/dashboard/models/dashboard_model.dart';
 import 'package:vpn_agent_app/features/dashboard/services/dashboard_service.dart';
@@ -157,7 +161,8 @@ class _DeviceSlotManagementScreenState
   // ── Actions ─────────────────────────────────────────────────────────────
 
   Future<void> _addSlot(VpnUser user) async {
-    final money = NumberFormat('#,##0');
+    // C_LISTS_DS_DIALOGFMT — the shared instance, not a new one per tap.
+    final money = Fmt.money;
     final affordable = _balance == null || _slotPrice <= _balance!;
 
     final ok = await showDialog<bool>(
@@ -430,7 +435,9 @@ class _PriceBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = Theme.of(context).textTheme;
-    final money = NumberFormat('#,##0');
+    // C_LISTS_DS_PRICEFMT — was NumberFormat('#,##0') here, constructed on
+    // every frame this bar painted.
+    final money = Fmt.money;
 
     return AppCard(
       tone: SurfaceTone.ink,
@@ -642,23 +649,40 @@ class _SlotButton extends StatelessWidget {
         ? AppColors.accentInk
         : AppColors.surfaceAlt;
 
-    return Material(
-      color: background,
-      borderRadius: BorderRadius.circular(9),
+    // C_LISTS_DS_HITAREA — 44 of hit area around a box that still paints at
+    // 34. These two sit 6 pixels apart at the right edge of a row, and at 34
+    // they were under the 44 minimum in both directions: plus and minus, next
+    // to each other, each one a charge or a downgrade if it is the one you
+    // hit by mistake.
+    //
+    // Ink rather than a Material of its own: the decoration is painted on the
+    // list's Material, and the InkWell's splash goes on over it, so the
+    // ripple still fills the visible box and not the 44 around it.
+    return SizedBox(
+      width: 44,
+      height: 44,
       child: InkWell(
         onTap: enabled ? onTap : null,
-        borderRadius: BorderRadius.circular(9),
-        child: SizedBox(
-          width: 34,
-          height: 34,
-          child: Icon(
-            icon,
-            size: 18,
-            color: !enabled
-                ? AppColors.textTertiary
-                : filled
-                ? AppColors.textOnAccent
-                : AppColors.textPrimary,
+        borderRadius: BorderRadius.circular(22),
+        child: Center(
+          child: Ink(
+            width: 34,
+            height: 34,
+            decoration: BoxDecoration(
+              color: background,
+              borderRadius: BorderRadius.circular(9),
+            ),
+            child: Center(
+              child: Icon(
+                icon,
+                size: 18,
+                color: !enabled
+                    ? AppColors.textTertiary
+                    : filled
+                    ? AppColors.textOnAccent
+                    : AppColors.textPrimary,
+              ),
+            ),
           ),
         ),
       ),
@@ -666,34 +690,109 @@ class _SlotButton extends StatelessWidget {
   }
 }
 
-class _ListSkeleton extends StatelessWidget {
+/// C_LISTS_DS_SKELETON — one ticker for the whole placeholder list.
+///
+/// AppSkeleton owns an AnimationController each; eight rows of four bars meant
+/// thirty-two of them running the same 1200ms sweep while the screen waited
+/// for its first page. One controller lives here and every bar listens to it.
+class _ListSkeleton extends StatefulWidget {
   const _ListSkeleton();
+
+  @override
+  State<_ListSkeleton> createState() => _ListSkeletonState();
+}
+
+class _ListSkeletonState extends State<_ListSkeleton>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _shimmer;
+
+  @override
+  void initState() {
+    super.initState();
+    _shimmer = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1200),
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _shimmer.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     return ListView.builder(
       physics: const NeverScrollableScrollPhysics(),
       itemCount: 8,
-      itemBuilder: (_, __) => const Padding(
-        padding: EdgeInsets.fromLTRB(16, 10, 12, 10),
+      itemBuilder: (_, __) => Padding(
+        padding: const EdgeInsets.fromLTRB(16, 10, 12, 10),
         child: Row(
           children: [
-            AppSkeleton(width: 42, height: 42, radius: 21),
-            SizedBox(width: 12),
+            _SkeletonBar(_shimmer, width: 42, height: 42, radius: 21),
+            const SizedBox(width: 12),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  AppSkeleton(width: 130, height: 13),
-                  SizedBox(height: 7),
-                  AppSkeleton(width: 90, height: 11),
+                  _SkeletonBar(_shimmer, width: 130, height: 13),
+                  const SizedBox(height: 7),
+                  _SkeletonBar(_shimmer, width: 90, height: 11),
                 ],
               ),
             ),
-            SizedBox(width: 8),
-            AppSkeleton(width: 74, height: 34, radius: 9),
+            const SizedBox(width: 8),
+            // 94 by 44: the two slot buttons at their new hit size, so the
+            // placeholder occupies what the real row will.
+            _SkeletonBar(_shimmer, width: 94, height: 44, radius: 9),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// One placeholder bar, painting from an animation it does not own.
+class _SkeletonBar extends StatelessWidget {
+  final Animation<double> shimmer;
+  final double? width;
+  final double height;
+  final double radius;
+
+  const _SkeletonBar(
+    this.shimmer, {
+    this.width,
+    this.height = 14,
+    this.radius = 6,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return RepaintBoundary(
+      child: AnimatedBuilder(
+        animation: shimmer,
+        builder: (context, _) {
+          // The gradient slides across a fixed box rather than the box moving,
+          // so nothing is laid out again per frame.
+          final t = shimmer.value * 2 - 1;
+          return Container(
+            width: width,
+            height: height,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(radius),
+              gradient: LinearGradient(
+                begin: Alignment(-1 + t, 0),
+                end: Alignment(1 + t, 0),
+                colors: const [
+                  AppColors.surfaceAlt,
+                  AppColors.border,
+                  AppColors.surfaceAlt,
+                ],
+              ),
+            ),
+          );
+        },
       ),
     );
   }

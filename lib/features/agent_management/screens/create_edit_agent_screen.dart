@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:iconsax/iconsax.dart';
-import 'package:intl/intl.dart';
 
 import 'package:vpn_agent_app/core/theme/app_colors.dart';
 import 'package:vpn_agent_app/core/theme/app_theme.dart';
 import 'package:vpn_agent_app/shared_widgets/ui/app_surface.dart';
+
+import '../../../core/utils/formatters.dart';
+import '../../../core/widgets/confirm_dialog.dart';
 
 import 'package:vpn_agent_app/features/agent_management/models/agent_model.dart';
 import 'package:vpn_agent_app/features/agent_management/services/agent_management_service.dart';
@@ -31,6 +33,14 @@ class _CreateEditAgentScreenState extends State<CreateEditAgentScreen> {
   final _credit = TextEditingController();
   final _addCredit = TextEditingController();
   final _bonus = TextEditingController(text: '0');
+
+  /// FOCUS_CHAIN_V1 — one node per field, so Enter walks down the form
+  /// instead of shutting the keyboard after every entry.
+  final _bonusFocus = FocusNode();
+  final _nameFocus = FocusNode();
+  final _emailFocus = FocusNode();
+  final _passwordFocus = FocusNode();
+  final _creditFocus = FocusNode();
 
   bool _active = true;
   bool _canSendNoti = false;
@@ -65,22 +75,28 @@ class _CreateEditAgentScreenState extends State<CreateEditAgentScreen> {
       _selectedPlanIds = List.from(agent.planIds);
     }
 
-    for (final c in [_name, _email, _password, _credit, _addCredit, _bonus]) {
-      c.addListener(_onChanged);
-    }
+    // FIELD_SCOPE_V1 — six controllers each carried a listener that called
+    // setState on this State, so a keystroke in any field rebuilt the hero,
+    // every plan tile, all three permission tiles and the save bar. One
+    // widget on this screen reads the typed text — the credit field, for its
+    // bonus suffix — and it listens to the controllers itself now.
   }
 
   @override
   void dispose() {
     for (final c in [_name, _email, _password, _credit, _addCredit, _bonus]) {
-      c.removeListener(_onChanged);
       c.dispose();
     }
+    for (final f in [
+      _bonusFocus,
+      _nameFocus,
+      _emailFocus,
+      _passwordFocus,
+      _creditFocus,
+    ]) {
+      f.dispose();
+    }
     super.dispose();
-  }
-
-  void _onChanged() {
-    if (mounted) setState(() {});
   }
 
   /// ADMIN_STATUS_V1 — false and "not known yet" are different states.
@@ -134,6 +150,40 @@ class _CreateEditAgentScreenState extends State<CreateEditAgentScreen> {
       _toast('Could not confirm your account level. Try again in a moment.');
       _loadAdminStatus();
       return;
+    }
+
+    // CREDIT_CONFIRM_V1 — add_credit on an edit and credit_balance on a
+    // create both move credit out of the signed-in agent's own balance the
+    // moment this request lands, and nothing in the app sends it back.
+    final transfer =
+        int.tryParse((_isEdit ? _addCredit : _credit).text.trim()) ?? 0;
+    if (transfer > 0) {
+      final double bonus = _isAdmin
+          ? (double.tryParse(_bonus.text.trim()) ?? 0)
+          : 0;
+      final granted = (transfer * (1 + bonus / 100)).round();
+      final confirmed = await confirmAction(
+        context,
+        title: 'ခရက်ဒစ် လွှဲမည်လား',
+        message:
+            'သင့်လက်ကျန်မှ နုတ်ယူပြီး အေးဂျင့်၏ လက်ကျန်သို့ '
+            'ချက်ချင်း ရောက်ပါမည်။ ပြန်နုတ်၍ မရပါ။',
+        confirmLabel: 'လွှဲမည်',
+        details: [
+          ConfirmDetail('အေးဂျင့်', _name.text.trim()),
+          ConfirmDetail(
+            'လွှဲမည့် ပမာဏ',
+            Fmt.money.format(transfer),
+            emphasise: true,
+          ),
+          if (granted != transfer)
+            ConfirmDetail(
+              'အေးဂျင့် ရရှိမည့် ခရက်ဒစ်',
+              Fmt.money.format(granted),
+            ),
+        ],
+      );
+      if (!confirmed || !mounted) return;
     }
 
     HapticFeedback.mediumImpact();
@@ -229,14 +279,28 @@ class _CreateEditAgentScreenState extends State<CreateEditAgentScreen> {
                               style: Theme.of(context).textTheme.bodySmall,
                             ),
                             const SizedBox(height: 10),
-                            _BonusField(controller: _bonus),
+                            _BonusField(
+                              controller: _bonus,
+                              focusNode: _bonusFocus,
+                              nextFocus: _nameFocus,
+                            ),
                             const SizedBox(height: 22),
                           ],
                           const AppSectionHeader(title: 'Account'),
                           const SizedBox(height: 10),
                           TextFormField(
                             controller: _name,
+                            focusNode: _nameFocus,
                             textInputAction: TextInputAction.next,
+                            onFieldSubmitted: (_) {
+                              // The email field is disabled on an edit, so
+                              // Enter skips over it rather than dead-ending.
+                              if (_isEdit) {
+                                _passwordFocus.requestFocus();
+                              } else {
+                                _emailFocus.requestFocus();
+                              }
+                            },
                             decoration: const InputDecoration(
                               labelText: 'Name',
                               prefixIcon: Icon(Iconsax.user, size: 18),
@@ -252,9 +316,12 @@ class _CreateEditAgentScreenState extends State<CreateEditAgentScreen> {
                             // unique; changing it would move the account rather
                             // than edit it.
                             enabled: !_isEdit,
+                            focusNode: _emailFocus,
                             keyboardType: TextInputType.emailAddress,
                             autocorrect: false,
                             textInputAction: TextInputAction.next,
+                            onFieldSubmitted: (_) =>
+                                _passwordFocus.requestFocus(),
                             decoration: InputDecoration(
                               labelText: 'Email',
                               helperText: _isEdit ? 'Cannot be changed' : null,
@@ -275,9 +342,13 @@ class _CreateEditAgentScreenState extends State<CreateEditAgentScreen> {
                           const SizedBox(height: 12),
                           TextFormField(
                             controller: _password,
+                            focusNode: _passwordFocus,
                             obscureText: _obscure,
                             autocorrect: false,
                             enableSuggestions: false,
+                            textInputAction: TextInputAction.next,
+                            onFieldSubmitted: (_) =>
+                                _creditFocus.requestFocus(),
                             decoration: InputDecoration(
                               labelText: 'Password',
                               hintText: _isEdit
@@ -312,8 +383,8 @@ class _CreateEditAgentScreenState extends State<CreateEditAgentScreen> {
                             currentBalance: widget.agent?.creditBalance,
                             initialController: _credit,
                             addController: _addCredit,
-                            bonusPercent:
-                                double.tryParse(_bonus.text.trim()) ?? 0,
+                            bonusController: _bonus,
+                            focusNode: _creditFocus,
                           ),
                           const SizedBox(height: 22),
                           const AppSectionHeader(title: 'Plans they can sell'),
@@ -482,29 +553,35 @@ class _StatusToggle extends StatelessWidget {
 
 // ── Credit ────────────────────────────────────────────────────────────────
 
+/// CREDIT_FIELD_SCOPE_V1 — the one widget on this form that reads what is
+/// being typed.
+///
+/// The screen used to keep a listener on all six controllers, each calling
+/// setState on the State, so a keystroke anywhere rebuilt the whole form in
+/// order to update the suffix on this single field. The field watches its own
+/// controller and the bonus controller instead, and nothing outside this
+/// builder rebuilds when either changes.
 class _CreditSection extends StatelessWidget {
   final bool isEdit;
   final int? currentBalance;
   final TextEditingController initialController;
   final TextEditingController addController;
-  final double bonusPercent;
+  final TextEditingController bonusController;
+  final FocusNode focusNode;
 
   const _CreditSection({
     required this.isEdit,
     required this.currentBalance,
     required this.initialController,
     required this.addController,
-    required this.bonusPercent,
+    required this.bonusController,
+    required this.focusNode,
   });
 
   @override
   Widget build(BuildContext context) {
     final t = Theme.of(context).textTheme;
-    final money = NumberFormat('#,##0');
-
     final field = isEdit ? addController : initialController;
-    final entered = int.tryParse(field.text.trim()) ?? 0;
-    final granted = (entered * (1 + bonusPercent / 100)).round();
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -520,29 +597,42 @@ class _CreditSection extends StatelessWidget {
         if (isEdit && currentBalance != null) ...[
           const SizedBox(height: 8),
           Text(
-            'They currently hold ${money.format(currentBalance)}.',
+            'They currently hold ${Fmt.money.format(currentBalance)}.',
             style: t.bodySmall?.copyWith(color: AppColors.textSecondary),
           ),
         ],
         const SizedBox(height: 10),
-        TextFormField(
-          controller: field,
-          keyboardType: TextInputType.number,
-          inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-          decoration: InputDecoration(
-            labelText: isEdit ? 'Cash received' : 'Cash received',
-            prefixIcon: const Icon(Iconsax.wallet_2, size: 18),
-            // The bonus is applied server-side, so the number typed is not
-            // the number granted. Showing the result avoids an agent
-            // discovering the difference after the fact.
-            suffixText: entered > 0 && bonusPercent > 0
-                ? '→ ${money.format(granted)}'
-                : null,
-            suffixStyle: t.bodyMedium?.copyWith(
-              color: AppColors.accentInk,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
+        AnimatedBuilder(
+          animation: Listenable.merge([field, bonusController]),
+          builder: (context, _) {
+            final entered = int.tryParse(field.text.trim()) ?? 0;
+            final double bonusPercent =
+                double.tryParse(bonusController.text.trim()) ?? 0;
+            final granted = (entered * (1 + bonusPercent / 100)).round();
+
+            return TextFormField(
+              controller: field,
+              focusNode: focusNode,
+              keyboardType: TextInputType.number,
+              textInputAction: TextInputAction.done,
+              onFieldSubmitted: (_) => focusNode.unfocus(),
+              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+              decoration: InputDecoration(
+                labelText: 'Cash received',
+                prefixIcon: const Icon(Iconsax.wallet_2, size: 18),
+                // The bonus is applied server-side, so the number typed is
+                // not the number granted. Showing the result avoids an agent
+                // discovering the difference after the fact.
+                suffixText: entered > 0 && bonusPercent > 0
+                    ? '→ ${Fmt.money.format(granted)}'
+                    : null,
+                suffixStyle: t.bodyMedium?.copyWith(
+                  color: AppColors.accentInk,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            );
+          },
         ),
       ],
     );
@@ -551,14 +641,23 @@ class _CreditSection extends StatelessWidget {
 
 class _BonusField extends StatelessWidget {
   final TextEditingController controller;
+  final FocusNode focusNode;
+  final FocusNode nextFocus;
 
-  const _BonusField({required this.controller});
+  const _BonusField({
+    required this.controller,
+    required this.focusNode,
+    required this.nextFocus,
+  });
 
   @override
   Widget build(BuildContext context) {
     return TextFormField(
       controller: controller,
+      focusNode: focusNode,
       keyboardType: TextInputType.number,
+      textInputAction: TextInputAction.next,
+      onFieldSubmitted: (_) => nextFocus.requestFocus(),
       inputFormatters: [FilteringTextInputFormatter.digitsOnly],
       decoration: const InputDecoration(
         labelText: 'Bonus',
@@ -630,9 +729,9 @@ class _PlanPicker extends StatelessWidget {
             Expanded(
               child: _PlanTile(
                 name: (plans[i]['plan_name'] ?? 'Plan').toString(),
-                price: NumberFormat(
-                  '#,##0',
-                ).format(plans[i]['price_per_month_credits'] ?? 0),
+                price: Fmt.money.format(
+                  plans[i]['price_per_month_credits'] ?? 0,
+                ),
                 selected: selected.contains(plans[i]['id']),
                 onTap: () => onToggle(plans[i]['id'] as int),
               ),

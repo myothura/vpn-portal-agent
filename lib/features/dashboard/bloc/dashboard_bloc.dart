@@ -69,6 +69,10 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
   final DashboardRepository _repository;
   Timer? _timer;
 
+  /// Set once DashboardStarted has run. Without it, a resume arriving before
+  /// the first fetch would start a poll on a bloc that has never loaded.
+  bool _pollingWanted = false;
+
   DashboardBloc({required DashboardRepository repository})
     : _repository = repository,
       super(DashboardInitial()) {
@@ -96,10 +100,34 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
     await _fetchData(emit, isBackground: false);
 
     // 3. Start Polling (Real-time updates every 30 seconds)
+    _startPolling();
+  }
+
+  // LIFECYCLE_D — the poll used to run for as long as the bloc existed, which
+  // is as long as the app is alive. Backgrounded, that was a request every
+  // half minute, on mobile data, for figures nobody could see. MainScaffold
+  // drives the two methods below from didChangeAppLifecycleState.
+  void _startPolling() {
     _timer?.cancel();
+    _pollingWanted = true;
     _timer = Timer.periodic(const Duration(seconds: 30), (_) {
       add(_DashboardAutoUpdated());
     });
+  }
+
+  /// Called when the app leaves the foreground.
+  void pausePolling() {
+    _timer?.cancel();
+    _timer = null;
+  }
+
+  /// Called when it comes back. Fetches once straight away — returning to a
+  /// figure frozen for however long the app was away is exactly what the poll
+  /// exists to prevent — and then resumes the interval.
+  void resumePolling() {
+    if (!_pollingWanted || _timer != null || isClosed) return;
+    add(_DashboardAutoUpdated());
+    _startPolling();
   }
 
   Future<void> _onRefreshed(

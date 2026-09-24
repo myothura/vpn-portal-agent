@@ -311,12 +311,15 @@ class _MethodCard extends StatelessWidget {
                           ),
                         );
                       },
-                      borderRadius: BorderRadius.circular(6),
-                      child: const Padding(
-                        padding: EdgeInsets.all(3),
+                      borderRadius: BorderRadius.circular(10),
+                      // AGENT_APP_F6 — the target was 20x20. The icon is the
+                      // same size; the box around it is now 44.
+                      child: const SizedBox(
+                        width: 44,
+                        height: 44,
                         child: Icon(
                           Iconsax.copy,
-                          size: 14,
+                          size: 16,
                           color: AppColors.textTertiary,
                         ),
                       ),
@@ -346,11 +349,11 @@ class _MethodCard extends StatelessWidget {
               ],
             ),
           ),
+          // AGENT_APP_F6 — compact density took a delete button down to 40.
           IconButton(
             onPressed: onDelete,
             icon: const Icon(Iconsax.trash, size: 17),
             color: AppColors.textTertiary,
-            visualDensity: VisualDensity.compact,
           ),
         ],
       ),
@@ -416,6 +419,11 @@ class _MethodSheetState extends State<_MethodSheet> {
   late final TextEditingController _accountName;
   late final TextEditingController _accountNumber;
 
+  // AGENT_APP_F6 — the return key had nowhere to send focus, so it closed the
+  // keyboard in the middle of a three-field form.
+  final _accountNameFocus = FocusNode();
+  final _accountNumberFocus = FocusNode();
+
   String? _localImage;
   String? _existingQr;
 
@@ -435,6 +443,8 @@ class _MethodSheetState extends State<_MethodSheet> {
     _bank.dispose();
     _accountName.dispose();
     _accountNumber.dispose();
+    _accountNameFocus.dispose();
+    _accountNumberFocus.dispose();
     super.dispose();
   }
 
@@ -503,6 +513,7 @@ class _MethodSheetState extends State<_MethodSheet> {
               TextFormField(
                 controller: _bank,
                 textInputAction: TextInputAction.next,
+                onFieldSubmitted: (_) => _accountNameFocus.requestFocus(),
                 decoration: const InputDecoration(
                   labelText: 'Bank or wallet',
                   hintText: 'KBZPay, Wave Money, AYA…',
@@ -513,7 +524,9 @@ class _MethodSheetState extends State<_MethodSheet> {
               const SizedBox(height: 12),
               TextFormField(
                 controller: _accountName,
+                focusNode: _accountNameFocus,
                 textInputAction: TextInputAction.next,
+                onFieldSubmitted: (_) => _accountNumberFocus.requestFocus(),
                 textCapitalization: TextCapitalization.words,
                 decoration: const InputDecoration(labelText: 'Account holder'),
                 validator: (v) => (v ?? '').trim().isEmpty
@@ -523,7 +536,10 @@ class _MethodSheetState extends State<_MethodSheet> {
               const SizedBox(height: 12),
               TextFormField(
                 controller: _accountNumber,
+                focusNode: _accountNumberFocus,
                 keyboardType: TextInputType.number,
+                textInputAction: TextInputAction.done,
+                onFieldSubmitted: (_) => _submit(),
                 decoration: const InputDecoration(labelText: 'Account number'),
                 style: const TextStyle(
                   fontFeatures: [FontFeature.tabularFigures()],

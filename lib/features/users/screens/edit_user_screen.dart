@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:iconsax/iconsax.dart';
-import 'package:intl/intl.dart';
 
 import 'package:vpn_agent_app/core/theme/app_colors.dart';
 import 'package:vpn_agent_app/core/theme/app_theme.dart';
 import 'package:vpn_agent_app/shared_widgets/ui/app_surface.dart';
+
+import '../../../core/utils/formatters.dart';
+import '../../../core/widgets/confirm_dialog.dart';
 
 import 'package:vpn_agent_app/features/users/models/plan_model.dart';
 import 'package:vpn_agent_app/features/users/models/vpn_user_model.dart';
@@ -35,8 +37,13 @@ class _EditUserScreenState extends State<EditUserScreen> {
   /// Extension to add, in months and days. Both default to zero: editing a
   /// user is usually about status or password, and silently extending a
   /// subscription because a field defaulted to 1 would cost the agent credit.
-  int _months = 0;
-  int _days = 0;
+  ///
+  /// STEPPER_SCOPE_V1 — held as notifiers rather than plain ints. A stepper
+  /// tap used to call setState on this State, which rebuilt the hero, the
+  /// plan tiles, the business card and both steppers in order to change one
+  /// number. Only the three widgets that read the value listen now.
+  final _months = ValueNotifier<int>(0);
+  final _days = ValueNotifier<int>(0);
 
   late String _status;
   bool _saving = false;
@@ -56,6 +63,8 @@ class _EditUserScreenState extends State<EditUserScreen> {
   @override
   void dispose() {
     _password.dispose();
+    _months.dispose();
+    _days.dispose();
     super.dispose();
   }
 
@@ -87,7 +96,7 @@ class _EditUserScreenState extends State<EditUserScreen> {
 
   // ── Derived ──
 
-  int get _addedDays => _months * 30 + _days;
+  int get _addedDays => _months.value * 30 + _days.value;
 
   bool get _statusChanged => _status != widget.user.status;
   bool get _planChanged =>
@@ -123,14 +132,67 @@ class _EditUserScreenState extends State<EditUserScreen> {
 
   Future<void> _save() async {
     if (_plan == null || !_hasChanges) return;
+
+    // SAVE_CONFIRM_V1 — one tap used to write the plan, the expiry, the
+    // status and the password in a single request and take the credit for the
+    // extension with it. The fields and the figure go on the dialog first.
+    final details = <ConfirmDetail>[
+      ConfirmDetail('အသုံးပြုသူ', widget.user.username),
+    ];
+    if (_planChanged) {
+      final from = widget.user.planName ?? 'မသတ်မှတ်ရသေးပါ';
+      details.add(ConfirmDetail('ပလန်', '$from → ${_plan!.planName}'));
+    }
+    if (_addedDays > 0) {
+      final expiry = _newExpiry;
+      details.add(
+        ConfirmDetail(
+          'သက်တမ်းကုန်ဆုံးရက်',
+          expiry == null ? '—' : Fmt.date.format(expiry),
+        ),
+      );
+    }
+    if (_statusChanged) {
+      details.add(
+        ConfirmDetail(
+          'အခြေအနေ',
+          _status == 'active' ? 'ဖွင့်ထားမည်' : 'ရပ်ထားမည်',
+        ),
+      );
+    }
+    if (_passwordChanged) {
+      details.add(const ConfirmDetail('စကားဝှက်', 'အသစ် ပြောင်းမည်'));
+    }
+    details.add(
+      ConfirmDetail('ထပ်ဆောင်း စက်နေရာ', '${widget.user.extraDeviceSlots}'),
+    );
+    details.add(
+      ConfirmDetail(
+        'ကုန်ကျမည့် ခရက်ဒစ်',
+        _addedDays > 0 ? Fmt.money.format(_cost) : '0',
+        emphasise: true,
+      ),
+    );
+
+    final confirmed = await confirmAction(
+      context,
+      title: 'ပြင်ဆင်မှု သိမ်းမည်လား',
+      message:
+          'အောက်ပါအတိုင်း ပြောင်းလဲပါမည်။ '
+          'ကုန်ကျမည့် ခရက်ဒစ်ကို ချက်ချင်း နုတ်ယူပါမည်။',
+      confirmLabel: 'သိမ်းမည်',
+      details: details,
+    );
+    if (!confirmed || !mounted) return;
+
     HapticFeedback.mediumImpact();
     setState(() => _saving = true);
 
     final ok = await _userService.updateUser(
       userId: widget.user.id,
       planId: _plan!.id,
-      months: _months,
-      days: _days,
+      months: _months.value,
+      days: _days.value,
       status: _status,
       password: _passwordChanged ? _password.text : null,
     );
@@ -150,6 +212,29 @@ class _EditUserScreenState extends State<EditUserScreen> {
 
   Future<void> _assignBusiness() async {
     if (_businessPlan == null) return;
+
+    // BUSINESS_CONFIRM_V1 — a different endpoint from Save, applied the
+    // moment it returns. Taking the plan off again does not refund what the
+    // assignment cost, so the monthly price is on the dialog.
+    final confirmed = await confirmAction(
+      context,
+      title: 'လုပ်ငန်းသုံး ပလန် ထည့်မည်လား',
+      message:
+          'ချက်ချင်း သက်ရောက်ပါမည်။ '
+          'ပြန်ဖြုတ်လျှင်လည်း ကုန်ကျပြီးသား ခရက်ဒစ်ကို ပြန်မရပါ။',
+      confirmLabel: 'ထည့်မည်',
+      details: [
+        ConfirmDetail('အသုံးပြုသူ', widget.user.username),
+        ConfirmDetail('လုပ်ငန်းသုံး ပလန်', _businessPlan!.planName),
+        ConfirmDetail(
+          'တစ်လနှုန်း',
+          Fmt.money.format(_businessPlan!.price),
+          emphasise: true,
+        ),
+      ],
+    );
+    if (!confirmed || !mounted) return;
+
     HapticFeedback.mediumImpact();
     setState(() => _businessBusy = true);
 
@@ -248,10 +333,19 @@ class _EditUserScreenState extends State<EditUserScreen> {
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.stretch,
                               children: [
-                                _SubscriptionCard(
-                                  user: widget.user,
-                                  currentExpiry: _currentExpiry,
-                                  newExpiry: _newExpiry,
+                                // The only thing on this card that moves
+                                // is the pending expiry date, so the card is
+                                // the only thing that rebuilds for it.
+                                AnimatedBuilder(
+                                  animation: Listenable.merge([
+                                    _months,
+                                    _days,
+                                  ]),
+                                  builder: (context, _) => _SubscriptionCard(
+                                    user: widget.user,
+                                    currentExpiry: _currentExpiry,
+                                    newExpiry: _newExpiry,
+                                  ),
                                 ),
                                 const SizedBox(height: 22),
                                 const AppSectionHeader(title: 'Status'),
@@ -276,22 +370,28 @@ class _EditUserScreenState extends State<EditUserScreen> {
                                 Row(
                                   children: [
                                     Expanded(
-                                      child: _Stepper(
-                                        label: 'Months',
-                                        value: _months,
-                                        max: 36,
-                                        onChanged: (v) =>
-                                            setState(() => _months = v),
+                                      child: ValueListenableBuilder<int>(
+                                        valueListenable: _months,
+                                        builder: (context, months, _) =>
+                                            _Stepper(
+                                              label: 'Months',
+                                              value: months,
+                                              max: 36,
+                                              onChanged: (v) =>
+                                                  _months.value = v,
+                                            ),
                                       ),
                                     ),
                                     const SizedBox(width: 12),
                                     Expanded(
-                                      child: _Stepper(
-                                        label: 'Days',
-                                        value: _days,
-                                        max: 29,
-                                        onChanged: (v) =>
-                                            setState(() => _days = v),
+                                      child: ValueListenableBuilder<int>(
+                                        valueListenable: _days,
+                                        builder: (context, days, _) => _Stepper(
+                                          label: 'Days',
+                                          value: days,
+                                          max: 29,
+                                          onChanged: (v) => _days.value = v,
+                                        ),
                                       ),
                                     ),
                                   ],
@@ -304,7 +404,15 @@ class _EditUserScreenState extends State<EditUserScreen> {
                                   obscureText: _obscure,
                                   autocorrect: false,
                                   enableSuggestions: false,
-                                  onChanged: (_) => setState(() {}),
+                                  // PASSWORD_SCOPE_V1 — this was
+                                  // `onChanged: (_) => setState(() {})`,
+                                  // purely so the save bar could re-read
+                                  // _passwordChanged. The bar listens to the
+                                  // controller itself now, so a keystroke no
+                                  // longer rebuilds the whole form.
+                                  textInputAction: TextInputAction.done,
+                                  onSubmitted: (_) =>
+                                      FocusScope.of(context).unfocus(),
                                   decoration: InputDecoration(
                                     hintText: 'Leave blank to keep current',
                                     prefixIcon: const Icon(
@@ -341,12 +449,22 @@ class _EditUserScreenState extends State<EditUserScreen> {
                             ),
                           ),
                         ),
-                        _SaveBar(
-                          cost: _cost,
-                          addedDays: _addedDays,
-                          enabled: _hasChanges,
-                          busy: _saving,
-                          onSave: _save,
+                        // The bar reads the password field and both
+                        // steppers, so it listens to all three itself rather
+                        // than having each of them rebuild the screen.
+                        AnimatedBuilder(
+                          animation: Listenable.merge([
+                            _password,
+                            _months,
+                            _days,
+                          ]),
+                          builder: (context, _) => _SaveBar(
+                            cost: _cost,
+                            addedDays: _addedDays,
+                            enabled: _hasChanges,
+                            busy: _saving,
+                            onSave: _save,
+                          ),
                         ),
                       ],
                     ),
@@ -412,7 +530,7 @@ class _SubscriptionCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = Theme.of(context).textTheme;
-    final date = DateFormat('dd MMM yyyy');
+    // FMT_DATE_V1 — Fmt.date, not a DateFormat parsed on every rebuild.
     final expired =
         currentExpiry != null && currentExpiry!.isBefore(DateTime.now());
 
@@ -449,7 +567,7 @@ class _SubscriptionCard extends StatelessWidget {
               Text(
                 currentExpiry == null
                     ? 'No expiry'
-                    : date.format(currentExpiry!),
+                    : Fmt.date.format(currentExpiry!),
                 style: t.titleLarge?.copyWith(
                   color: newExpiry == null
                       ? AppColors.textOnInk
@@ -471,7 +589,7 @@ class _SubscriptionCard extends StatelessWidget {
                 ),
                 const SizedBox(width: 10),
                 Text(
-                  date.format(newExpiry!),
+                  Fmt.date.format(newExpiry!),
                   style: t.titleLarge?.copyWith(color: AppColors.textOnInk),
                 ),
               ],
@@ -693,7 +811,7 @@ class _PlanTile extends StatelessWidget {
               const Spacer(),
               const SizedBox(height: 6),
               Text(
-                '${NumberFormat('#,##0').format(plan.price)}/mo',
+                '${Fmt.money.format(plan.price)}/mo',
                 maxLines: 1,
                 style: t.bodySmall?.copyWith(
                   fontSize: 11,
@@ -850,19 +968,32 @@ class _StepButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: enabled ? AppColors.surfaceAlt : AppColors.background,
-      borderRadius: BorderRadius.circular(8),
-      child: InkWell(
-        onTap: enabled ? onTap : null,
-        borderRadius: BorderRadius.circular(8),
-        child: SizedBox(
-          width: 32,
-          height: 32,
-          child: Icon(
-            icon,
-            size: 18,
-            color: enabled ? AppColors.textPrimary : AppColors.textTertiary,
+    // TAP_TARGET_V1 — the visible square is still 32x32; the box that takes
+    // the tap is 44x44, the documented minimum on both platforms. A missed
+    // minus on a 36-month field is a real amount of credit. Ink rather than
+    // Container so the splash still paints over the square.
+    return SizedBox(
+      width: 44,
+      height: 44,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: enabled ? onTap : null,
+          borderRadius: BorderRadius.circular(22),
+          child: Center(
+            child: Ink(
+              width: 32,
+              height: 32,
+              decoration: BoxDecoration(
+                color: enabled ? AppColors.surfaceAlt : AppColors.background,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Icon(
+                icon,
+                size: 18,
+                color: enabled ? AppColors.textPrimary : AppColors.textTertiary,
+              ),
+            ),
           ),
         ),
       ),
@@ -984,7 +1115,7 @@ class _BusinessCard extends StatelessWidget {
                         ),
                       ),
                       Text(
-                        '${NumberFormat('#,##0').format(plan.price)}/mo',
+                        '${Fmt.money.format(plan.price)}/mo',
                         style: t.bodySmall?.copyWith(
                           fontWeight: FontWeight.w700,
                         ),
@@ -1045,7 +1176,7 @@ class _SaveBar extends StatelessWidget {
                     style: t.bodySmall,
                   ),
                   Text(
-                    addedDays > 0 ? NumberFormat('#,##0').format(cost) : '—',
+                    addedDays > 0 ? Fmt.money.format(cost) : '—',
                     style: t.headlineMedium?.copyWith(fontSize: 22),
                   ),
                 ],

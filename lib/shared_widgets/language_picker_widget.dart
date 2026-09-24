@@ -21,7 +21,10 @@ class LanguagePickerWidget extends StatelessWidget {
   /// Bottom sheet rather than a blurred centre dialog: it is reachable
   /// one-handed, and the old version drew white-on-white text through a
   /// BackdropFilter that is now invisible against a light page.
-  void _open(BuildContext context) {
+  /// AGENT_APP_F5 — also the app's only way in. This widget was written as
+  /// an app-bar pill and was never placed on a screen, so the three locales
+  /// the app ships could not be chosen between. Profile calls this directly.
+  static void show(BuildContext context) {
     final provider = Provider.of<LocaleProvider>(context, listen: false);
     final current = provider.locale ?? Localizations.localeOf(context);
     final l10n = AppLocalizations.of(context)!;
@@ -51,9 +54,10 @@ class LanguagePickerWidget extends StatelessWidget {
                   provider.setLocale(locale);
                   Navigator.of(sheetContext).pop();
                 },
-                leading: Text(
-                  L10n.getFlag(locale.languageCode),
-                  style: const TextStyle(fontSize: 24),
+                // AGENT_APP_G2_LEADING — code chip, not a flag.
+                leading: _CodeChip(
+                  code: L10n.getCode(locale.languageCode),
+                  selected: selected,
                 ),
                 title: Text(
                   _name(locale.languageCode),
@@ -83,24 +87,57 @@ class LanguagePickerWidget extends StatelessWidget {
     final current = provider.locale ?? Localizations.localeOf(context);
 
     return AppCard(
-      onTap: () => _open(context),
+      onTap: () => show(context),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       radius: AppTheme.radiusSm,
       showShadow: false,
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text(L10n.getFlag(current.languageCode),
-              style: const TextStyle(fontSize: 16)),
-          const SizedBox(width: 6),
+          // AGENT_APP_G2_PILL — the flag and the code said the same thing
+          // twice; the code alone is the half that is true.
           Text(
-            current.languageCode.toUpperCase(),
+            L10n.getCode(current.languageCode),
             style: Theme.of(context)
                 .textTheme
                 .bodySmall
                 ?.copyWith(fontWeight: FontWeight.w700),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// AGENT_APP_G2_CHIP — the bordered two-letter code that replaced the flag in
+/// the picker rows. Fixed 34x34 so all three rows line up.
+class _CodeChip extends StatelessWidget {
+  final String code;
+  final bool selected;
+
+  const _CodeChip({required this.code, required this.selected});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 34,
+      height: 34,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: selected ? AppColors.accentWash : AppColors.surfaceAlt,
+        borderRadius: BorderRadius.circular(9),
+        border: Border.all(
+          color: selected ? AppColors.accentInk : AppColors.border,
+        ),
+      ),
+      child: Text(
+        code,
+        style: TextStyle(
+          fontSize: 12,
+          fontWeight: FontWeight.w800,
+          letterSpacing: 0.4,
+          color: selected ? AppColors.accentInk : AppColors.textSecondary,
+        ),
       ),
     );
   }

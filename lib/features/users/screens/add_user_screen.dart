@@ -3,11 +3,12 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:iconsax/iconsax.dart';
-import 'package:intl/intl.dart';
 
 import 'package:vpn_agent_app/core/theme/app_colors.dart';
 import 'package:vpn_agent_app/core/theme/app_theme.dart';
 import 'package:vpn_agent_app/shared_widgets/ui/app_surface.dart';
+
+import '../../../core/utils/formatters.dart';
 
 import 'package:vpn_agent_app/features/dashboard/models/dashboard_model.dart';
 import 'package:vpn_agent_app/features/dashboard/services/dashboard_service.dart';
@@ -26,6 +27,10 @@ class _AddUserScreenState extends State<AddUserScreen> {
   final _username = TextEditingController();
   final _password = TextEditingController();
 
+  /// FOCUS_CHAIN_V1 — Enter on the username moves to the password instead of
+  /// closing the keyboard, so the form can be filled without reaching up.
+  final _passwordFocus = FocusNode();
+
   final _userService = UserManagementService();
   final _dashboardService = DashboardService();
 
@@ -39,8 +44,12 @@ class _AddUserScreenState extends State<AddUserScreen> {
   /// Duration held as numbers, not text controllers. The old screen parsed
   /// two TextFields on every rebuild and rebuilt the entire screen on every
   /// keystroke via three setState listeners.
-  int _months = 1;
-  int _days = 0;
+  ///
+  /// STEPPER_SCOPE_V1 — and as notifiers rather than plain ints, so a stepper
+  /// tap rebuilds the stepper and the cost bar instead of the hero, the plan
+  /// tiles and the business section along with them.
+  final _months = ValueNotifier<int>(1);
+  final _days = ValueNotifier<int>(0);
 
   bool _busy = false;
   bool _loadingData = true;
@@ -57,6 +66,9 @@ class _AddUserScreenState extends State<AddUserScreen> {
   void dispose() {
     _username.dispose();
     _password.dispose();
+    _passwordFocus.dispose();
+    _months.dispose();
+    _days.dispose();
     super.dispose();
   }
 
@@ -93,7 +105,7 @@ class _AddUserScreenState extends State<AddUserScreen> {
       ? _businessPlan!.price
       : (_plan?.price ?? 0);
 
-  int get _totalDays => _months * 30 + _days;
+  int get _totalDays => _months.value * 30 + _days.value;
 
   int get _totalCost => ((_chargePrice / 30) * _totalDays).ceil();
 
@@ -138,8 +150,8 @@ class _AddUserScreenState extends State<AddUserScreen> {
       username: username,
       password: _password.text,
       planId: _plan!.id,
-      months: _months,
-      days: _days,
+      months: _months.value,
+      days: _days.value,
     );
 
     if (!mounted) return;
@@ -246,6 +258,8 @@ class _AddUserScreenState extends State<AddUserScreen> {
                                     controller: _username,
                                     autocorrect: false,
                                     textInputAction: TextInputAction.next,
+                                    onFieldSubmitted: (_) =>
+                                        _passwordFocus.requestFocus(),
                                     decoration: const InputDecoration(
                                       labelText: 'Username',
                                       prefixIcon: Icon(Iconsax.user, size: 18),
@@ -271,9 +285,13 @@ class _AddUserScreenState extends State<AddUserScreen> {
                                   const SizedBox(height: 14),
                                   TextFormField(
                                     controller: _password,
+                                    focusNode: _passwordFocus,
                                     obscureText: _obscure,
                                     autocorrect: false,
                                     enableSuggestions: false,
+                                    textInputAction: TextInputAction.done,
+                                    onFieldSubmitted: (_) =>
+                                        _passwordFocus.unfocus(),
                                     decoration: InputDecoration(
                                       labelText: 'Password',
                                       prefixIcon: const Icon(
@@ -323,22 +341,30 @@ class _AddUserScreenState extends State<AddUserScreen> {
                                   Row(
                                     children: [
                                       Expanded(
-                                        child: _Stepper(
-                                          label: 'Months',
-                                          value: _months,
-                                          max: 36,
-                                          onChanged: (v) =>
-                                              setState(() => _months = v),
+                                        child: ValueListenableBuilder<int>(
+                                          valueListenable: _months,
+                                          builder: (context, months, _) =>
+                                              _Stepper(
+                                                label: 'Months',
+                                                value: months,
+                                                max: 36,
+                                                onChanged: (v) =>
+                                                    _months.value = v,
+                                              ),
                                         ),
                                       ),
                                       const SizedBox(width: 12),
                                       Expanded(
-                                        child: _Stepper(
-                                          label: 'Days',
-                                          value: _days,
-                                          max: 29,
-                                          onChanged: (v) =>
-                                              setState(() => _days = v),
+                                        child: ValueListenableBuilder<int>(
+                                          valueListenable: _days,
+                                          builder: (context, days, _) =>
+                                              _Stepper(
+                                                label: 'Days',
+                                                value: days,
+                                                max: 29,
+                                                onChanged: (v) =>
+                                                    _days.value = v,
+                                              ),
                                         ),
                                       ),
                                     ],
@@ -360,13 +386,18 @@ class _AddUserScreenState extends State<AddUserScreen> {
                             ),
                           ),
                         ),
-                        _CostBar(
-                          totalCost: _totalCost,
-                          monthlyRate: _chargePrice,
-                          isBusiness: _enableBusiness,
-                          canAfford: _canAfford,
-                          busy: _busy,
-                          onCreate: _create,
+                        // Only the cost bar reads the two steppers, so
+                        // only the cost bar listens to them.
+                        AnimatedBuilder(
+                          animation: Listenable.merge([_months, _days]),
+                          builder: (context, _) => _CostBar(
+                            totalCost: _totalCost,
+                            monthlyRate: _chargePrice,
+                            isBusiness: _enableBusiness,
+                            canAfford: _canAfford,
+                            busy: _busy,
+                            onCreate: _create,
+                          ),
                         ),
                       ],
                     ),
@@ -455,7 +486,7 @@ class _BalanceRow extends StatelessWidget {
           ),
           const Spacer(),
           Text(
-            balance == null ? '—' : NumberFormat('#,##0').format(balance),
+            balance == null ? '—' : Fmt.money.format(balance),
             style: t.titleMedium?.copyWith(color: AppColors.textOnInk),
           ),
         ],
@@ -596,7 +627,7 @@ class _PlanTile extends StatelessWidget {
               const Spacer(),
               const SizedBox(height: 6),
               Text(
-                '${NumberFormat('#,##0').format(plan.price)}/mo',
+                '${Fmt.money.format(plan.price)}/mo',
                 maxLines: 1,
                 style: t.bodySmall?.copyWith(
                   fontSize: 11,
@@ -764,19 +795,32 @@ class _StepButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: enabled ? AppColors.surfaceAlt : AppColors.background,
-      borderRadius: BorderRadius.circular(8),
-      child: InkWell(
-        onTap: enabled ? onTap : null,
-        borderRadius: BorderRadius.circular(8),
-        child: SizedBox(
-          width: 32,
-          height: 32,
-          child: Icon(
-            icon,
-            size: 18,
-            color: enabled ? AppColors.textPrimary : AppColors.textTertiary,
+    // TAP_TARGET_V1 — the visible square is still 32x32; the box that takes
+    // the tap is 44x44, the documented minimum on both platforms. A missed
+    // minus on a 36-month field is a real amount of credit. Ink rather than
+    // Container so the splash still paints over the square.
+    return SizedBox(
+      width: 44,
+      height: 44,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: enabled ? onTap : null,
+          borderRadius: BorderRadius.circular(22),
+          child: Center(
+            child: Ink(
+              width: 32,
+              height: 32,
+              decoration: BoxDecoration(
+                color: enabled ? AppColors.surfaceAlt : AppColors.background,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Icon(
+                icon,
+                size: 18,
+                color: enabled ? AppColors.textPrimary : AppColors.textTertiary,
+              ),
+            ),
           ),
         ),
       ),
@@ -879,7 +923,7 @@ class _BusinessSection extends StatelessWidget {
                         ),
                       ),
                       Text(
-                        '${NumberFormat('#,##0').format(plan.price)}/mo',
+                        '${Fmt.money.format(plan.price)}/mo',
                         style: t.bodySmall?.copyWith(
                           fontWeight: FontWeight.w700,
                         ),
@@ -921,7 +965,8 @@ class _CostBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = Theme.of(context).textTheme;
-    final money = NumberFormat('#,##0');
+    // FMT_MONEY_V1 — the shared instance, not a NumberFormat per frame.
+    final money = Fmt.money;
 
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),

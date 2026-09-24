@@ -1,11 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:iconsax/iconsax.dart';
-import 'package:intl/intl.dart';
 
 import 'package:vpn_agent_app/core/navigation/app_transitions.dart';
 import 'package:vpn_agent_app/core/theme/app_colors.dart';
 import 'package:vpn_agent_app/core/theme/app_theme.dart';
+import 'package:vpn_agent_app/core/utils/formatters.dart';
+import 'package:vpn_agent_app/shared_widgets/language_picker_widget.dart';
 import 'package:vpn_agent_app/shared_widgets/ui/app_surface.dart';
 
 import 'package:vpn_agent_app/features/agent_management/screens/agent_list_screen.dart';
@@ -126,6 +127,11 @@ class _ProfileViewState extends State<_ProfileView> {
         ],
       ),
     );
+
+    // AGENT_APP_F3 — the dialog's route is torn down before this line runs,
+    // so the controller that fed its TextField has no listeners left. It was
+    // never disposed, which leaked one per edit.
+    controller.dispose();
 
     if (value == null || !mounted) return;
     context.read<ProfileBloc>().add(ProfileTelegramUpdated(value));
@@ -254,6 +260,19 @@ class _ProfileViewState extends State<_ProfileView> {
                     ),
                 ],
                 const SizedBox(height: 20),
+                // AGENT_APP_F5 — the only entry point to the language picker.
+                // Without it the app shipped three locales with no way to
+                // choose between them.
+                const AppSectionHeader(title: 'ဆက်တင်'),
+                const SizedBox(height: 10),
+                _Tile(
+                  icon: Icons.language_rounded,
+                  color: AppColors.cyan,
+                  title: 'ဘာသာစကား',
+                  subtitle: 'ဘာသာစကား ရွေးချယ်ပါ',
+                  onTap: () => LanguagePickerWidget.show(context),
+                ),
+                const SizedBox(height: 20),
                 const AppSectionHeader(title: 'What you can do'),
                 const SizedBox(height: 10),
                 _PermissionSummary(user: user),
@@ -307,8 +326,9 @@ class _IdentityCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // AGENT_APP_F7 — NumberFormat('#,##0') was constructed here, inside
+    // build(), every time this card repainted. Fmt.money is built once.
     final t = Theme.of(context).textTheme;
-    final money = NumberFormat('#,##0');
 
     return AppCard(
       tone: SurfaceTone.ink,
@@ -369,7 +389,7 @@ class _IdentityCard extends StatelessWidget {
               Expanded(
                 child: _InkFigure(
                   label: 'Balance',
-                  value: money.format(user.creditBalance),
+                  value: Fmt.money.format(user.creditBalance),
                 ),
               ),
               Container(

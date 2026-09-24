@@ -1,11 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:iconsax/iconsax.dart';
-import 'package:intl/intl.dart';
 
 import 'package:vpn_agent_app/core/theme/app_colors.dart';
 import 'package:vpn_agent_app/core/theme/app_theme.dart';
 import 'package:vpn_agent_app/shared_widgets/ui/app_surface.dart';
+
+// C_LISTS_CH_IMPORTS — intl is gone: two NumberFormats and a DateFormat, all
+// three built inside a build() or a row builder, now point at Fmt.
+import '../../../core/utils/formatters.dart';
 
 import 'package:vpn_agent_app/features/history/models/credit_history_model.dart';
 import 'package:vpn_agent_app/features/history/services/credit_history_service.dart';
@@ -127,7 +130,12 @@ class _CreditHistoryScreenState extends State<CreditHistoryScreen> {
             ),
           ),
           SizedBox(
-            height: 36,
+            // C_LISTS_CH_CHIPSCALE — the strip is horizontal, so it has to be
+            // given a height; that height is derived from the label rather
+            // than written down as 36. A 12pt line at 1.35 plus 10 of padding
+            // above and below is 36 at the default text size and grows with
+            // it, instead of cutting the chip labels off from about 1.2x up.
+            height: MediaQuery.textScalerOf(context).scale(12) * 1.35 + 20,
             child: ListView.separated(
               scrollDirection: Axis.horizontal,
               padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -237,7 +245,9 @@ class _SummaryCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = Theme.of(context).textTheme;
-    final money = NumberFormat('#,##0');
+    // C_LISTS_CH_SUMMARYFMT — the shared instance. This build() runs on every
+    // frame the card is on screen and constructed a new one each time.
+    final money = Fmt.money;
 
     return AppCard(
       tone: SurfaceTone.ink,
@@ -358,7 +368,10 @@ class _TransactionRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = Theme.of(context).textTheme;
-    final money = NumberFormat('#,##0');
+    // C_LISTS_CH_ROWFMT — this is a row builder: one NumberFormat was being
+    // constructed per visible row per frame, on a ledger that reaches
+    // thousands of rows.
+    final money = Fmt.money;
     final isCredit = tx.type == 'add';
 
     return Column(
@@ -448,7 +461,8 @@ class _TransactionRow extends StatelessWidget {
     if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
     if (diff.inHours < 24) return '${diff.inHours}h ago';
     if (diff.inDays < 7) return '${diff.inDays}d ago';
-    return DateFormat('dd MMM yyyy, h:mm a').format(local);
+    // C_LISTS_CH_DATEFMT — Fmt.dateTime is the same pattern, built once.
+    return Fmt.dateTime.format(local);
   }
 }
 
@@ -516,8 +530,36 @@ class _FilterChip extends StatelessWidget {
   }
 }
 
-class _ListSkeleton extends StatelessWidget {
+/// C_LISTS_CH_SKELETON — one ticker for the whole placeholder list.
+///
+/// AppSkeleton owns an AnimationController each; eight rows of four bars meant
+/// thirty-two of them running the same 1200ms sweep while the screen waited
+/// for its first page. One controller lives here and every bar listens to it.
+class _ListSkeleton extends StatefulWidget {
   const _ListSkeleton();
+
+  @override
+  State<_ListSkeleton> createState() => _ListSkeletonState();
+}
+
+class _ListSkeletonState extends State<_ListSkeleton>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _shimmer;
+
+  @override
+  void initState() {
+    super.initState();
+    _shimmer = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1200),
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _shimmer.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -525,26 +567,76 @@ class _ListSkeleton extends StatelessWidget {
       padding: const EdgeInsets.only(top: 4),
       physics: const NeverScrollableScrollPhysics(),
       itemCount: 8,
-      itemBuilder: (_, __) => const Padding(
-        padding: EdgeInsets.fromLTRB(16, 12, 16, 12),
+      itemBuilder: (_, __) => Padding(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
         child: Row(
           children: [
-            AppSkeleton(width: 35, height: 35, radius: AppTheme.radiusSm),
-            SizedBox(width: 12),
+            _SkeletonBar(
+              _shimmer,
+              width: 35,
+              height: 35,
+              radius: AppTheme.radiusSm,
+            ),
+            const SizedBox(width: 12),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  AppSkeleton(width: 180, height: 12),
-                  SizedBox(height: 7),
-                  AppSkeleton(width: 90, height: 10),
+                  _SkeletonBar(_shimmer, width: 180, height: 12),
+                  const SizedBox(height: 7),
+                  _SkeletonBar(_shimmer, width: 90, height: 10),
                 ],
               ),
             ),
-            SizedBox(width: 10),
-            AppSkeleton(width: 60, height: 13),
+            const SizedBox(width: 10),
+            _SkeletonBar(_shimmer, width: 60, height: 13),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// One placeholder bar, painting from an animation it does not own.
+class _SkeletonBar extends StatelessWidget {
+  final Animation<double> shimmer;
+  final double? width;
+  final double height;
+  final double radius;
+
+  const _SkeletonBar(
+    this.shimmer, {
+    this.width,
+    this.height = 14,
+    this.radius = 6,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return RepaintBoundary(
+      child: AnimatedBuilder(
+        animation: shimmer,
+        builder: (context, _) {
+          // The gradient slides across a fixed box rather than the box moving,
+          // so nothing is laid out again per frame.
+          final t = shimmer.value * 2 - 1;
+          return Container(
+            width: width,
+            height: height,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(radius),
+              gradient: LinearGradient(
+                begin: Alignment(-1 + t, 0),
+                end: Alignment(1 + t, 0),
+                colors: const [
+                  AppColors.surfaceAlt,
+                  AppColors.border,
+                  AppColors.surfaceAlt,
+                ],
+              ),
+            ),
+          );
+        },
       ),
     );
   }

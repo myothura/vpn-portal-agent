@@ -31,15 +31,21 @@ class AgentLoginState extends Equatable {
     this.errorMessage,
   });
 
+  /// AGENT_APP_F4 — errorMessage was passed straight through with no
+  /// fallback to the current value, so any copyWith that did not restate the
+  /// error cleared it: toggling the password eye after a failed login left
+  /// the screen showing a failure with no reason. It is carried forward now,
+  /// and the two emits that genuinely start over pass [clearError].
   AgentLoginState copyWith({
     AgentLoginStatus? status,
     bool? isPasswordVisible,
     String? errorMessage,
+    bool clearError = false,
   }) {
     return AgentLoginState(
       status: status ?? this.status,
       isPasswordVisible: isPasswordVisible ?? this.isPasswordVisible,
-      errorMessage: errorMessage,
+      errorMessage: clearError ? null : (errorMessage ?? this.errorMessage),
     );
   }
 
@@ -68,7 +74,8 @@ class AgentLoginBloc extends Bloc<AgentLoginEvent, AgentLoginState> {
     AgentLoginSubmitted event,
     Emitter<AgentLoginState> emit,
   ) async {
-    emit(state.copyWith(status: AgentLoginStatus.loading));
+    // A fresh attempt: the previous failure must not sit under the spinner.
+    emit(state.copyWith(status: AgentLoginStatus.loading, clearError: true));
 
     try {
       // ⭐️ Real API Call
@@ -79,7 +86,9 @@ class AgentLoginBloc extends Bloc<AgentLoginEvent, AgentLoginState> {
       );
 
       if (success) {
-        emit(state.copyWith(status: AgentLoginStatus.success));
+        emit(
+          state.copyWith(status: AgentLoginStatus.success, clearError: true),
+        );
       } else {
         emit(
           state.copyWith(
