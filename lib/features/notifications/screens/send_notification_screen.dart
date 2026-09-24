@@ -881,14 +881,26 @@ class _Preview extends StatelessWidget {
             // A 128px copy: assets/icon/icon.png is the 976KB launcher source
             // and is not declared as an asset anyway, so this preview was
             // always falling back to the placeholder glyph.
-            child: Image.asset(
-              'assets/images/app_mark.png',
-              width: 26,
-              height: 26,
-              errorBuilder: (_, __, ___) => const Icon(
-                Iconsax.notification,
-                size: 16,
-                color: AppColors.accent,
+            //
+            // APP_MARK_CACHE_V1 — the slot is 26 logical pixels, which is
+            // 78 physical on a 3x screen, against a 128px file. 78 is the
+            // most the slot can use.
+            //
+            // The RepaintBoundary here is about rebuild rate rather than
+            // size: this preview is driven by an AnimatedBuilder on the title
+            // and body controllers, so it is rebuilt on every keystroke, and
+            // the mark never changes.
+            child: RepaintBoundary(
+              child: Image.asset(
+                'assets/images/app_mark.png',
+                width: 26,
+                height: 26,
+                cacheWidth: 78,
+                errorBuilder: (_, _, _) => const Icon(
+                  Iconsax.notification,
+                  size: 16,
+                  color: AppColors.accent,
+                ),
               ),
             ),
           ),

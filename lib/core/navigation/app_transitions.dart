@@ -15,7 +15,7 @@ class AppTransitions {
     return PageRouteBuilder<T>(
       transitionDuration: const Duration(milliseconds: 420),
       reverseTransitionDuration: const Duration(milliseconds: 320),
-      pageBuilder: (_, __, ___) => page,
+      pageBuilder: (_, _, _) => page,
       transitionsBuilder: (_, animation, secondary, child) {
         // Incoming content is held back until the outgoing has mostly gone,
         // so the two never cross-dissolve into a muddy overlap.
@@ -45,7 +45,7 @@ class AppTransitions {
     return PageRouteBuilder<T>(
       transitionDuration: const Duration(milliseconds: 300),
       reverseTransitionDuration: const Duration(milliseconds: 260),
-      pageBuilder: (_, __, ___) => page,
+      pageBuilder: (_, _, _) => page,
       transitionsBuilder: (_, animation, secondary, child) {
         final offset = Tween<Offset>(
           begin: const Offset(0.06, 0),

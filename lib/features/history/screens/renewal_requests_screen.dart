@@ -522,11 +522,11 @@ class _RenewalRequestsScreenState extends State<RenewalRequestsScreen> {
         barrierDismissible: true,
         barrierColor: Colors.transparent,
         transitionDuration: const Duration(milliseconds: 220),
-        pageBuilder: (_, __, ___) => _ScreenshotViewer(
+        pageBuilder: (_, _, _) => _ScreenshotViewer(
           url: request.screenshotUrl,
           title: request.vpnUserName,
         ),
-        transitionsBuilder: (_, animation, __, child) =>
+        transitionsBuilder: (_, animation, _, child) =>
             FadeTransition(opacity: animation, child: child),
       ),
     );
@@ -561,7 +561,7 @@ class _RenewalRequestsScreenState extends State<RenewalRequestsScreen> {
                     scrollDirection: Axis.horizontal,
                     padding: const EdgeInsets.symmetric(horizontal: 16),
                     itemCount: _tabs.length,
-                    separatorBuilder: (_, __) => const SizedBox(width: 8),
+                    separatorBuilder: (_, _) => const SizedBox(width: 8),
                     itemBuilder: (context, i) {
                       final (status, label, color) = _tabs[i];
                       return _FilterChip(
@@ -595,7 +595,7 @@ class _RenewalRequestsScreenState extends State<RenewalRequestsScreen> {
                               parent: BouncingScrollPhysics(),
                             ),
                             itemCount: visible.length + 1,
-                            separatorBuilder: (_, __) =>
+                            separatorBuilder: (_, _) =>
                                 const SizedBox(height: 10),
                             itemBuilder: (context, i) {
                               if (i == visible.length) {
@@ -772,21 +772,34 @@ class _RequestCard extends StatelessWidget {
           _DetailRow(
             label: 'Payment slip',
             last: true,
+            // TAP_L_VIEW_LINK — the only tappable thing in a card whose other
+            // rows are text, and it was the height of its own label: about 18
+            // points, inside a row 40 points tall. It is 44 now, with a little
+            // horizontal padding so the ink splash reads as a control rather
+            // than as the words lighting up.
+            tallValue: true,
             valueWidget: InkWell(
               onTap: onViewScreenshot,
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    'View',
-                    style: t.bodyMedium?.copyWith(
-                      color: AppColors.info,
-                      fontWeight: FontWeight.w700,
-                    ),
+              borderRadius: BorderRadius.circular(10),
+              child: SizedBox(
+                height: 44,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        'View',
+                        style: t.bodyMedium?.copyWith(
+                          color: AppColors.info,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(width: 5),
+                      const Icon(Iconsax.eye, size: 15, color: AppColors.info),
+                    ],
                   ),
-                  const SizedBox(width: 5),
-                  const Icon(Iconsax.eye, size: 15, color: AppColors.info),
-                ],
+                ),
               ),
             ),
           ),
@@ -868,11 +881,21 @@ class _DetailRow extends StatelessWidget {
   final Widget? valueWidget;
   final bool last;
 
+  /// TAP_L_VIEW_ROW — set on a row whose value is itself tappable.
+  ///
+  /// That value carries its own 44-point height, so this row gives 7 of its 11
+  /// points of padding back and lands at 52 rather than 66: grown enough to
+  /// hold a real tap target, not enough to read as stretched beside the four
+  /// rows above it. The label is centred against it at the same time — against
+  /// a 44-tall value a top-aligned label sits well above the text it names.
+  final bool tallValue;
+
   const _DetailRow({
     required this.label,
     this.value,
     this.valueWidget,
     this.last = false,
+    this.tallValue = false,
   });
 
   @override
@@ -883,9 +906,14 @@ class _DetailRow extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+          padding: EdgeInsets.symmetric(
+            horizontal: 14,
+            vertical: tallValue ? 4 : 11,
+          ),
           child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
+            crossAxisAlignment: tallValue
+                ? CrossAxisAlignment.center
+                : CrossAxisAlignment.start,
             children: [
               Text(label, style: t.bodyMedium),
               const SizedBox(width: 16),
@@ -1036,6 +1064,22 @@ class _ScreenshotViewer extends StatelessWidget {
 
   const _ScreenshotViewer({required this.url, required this.title});
 
+  /// IMG_L_SLIPVIEW_FN — twice the device's pixel width, rounded up to a
+  /// multiple of 64.
+  ///
+  /// This is the screen an agent opens to read a transfer reference and an
+  /// amount off a payment slip before spending credit on it, and the
+  /// InteractiveViewer below zooms to 5x for exactly that. Decoding at the
+  /// unzoomed screen width would blur the only thing the screen is for, so the
+  /// cap is twice the screen: a 3000x4000 photograph of a bank receipt drops
+  /// from roughly 48 MB to 30 MB, and the number no longer depends on which
+  /// phone took the picture.
+  static int _zoomCachePx(BuildContext context) {
+    final media = MediaQuery.of(context);
+    final px = (media.size.width * media.devicePixelRatio * 2).ceil();
+    return px < 64 ? 64 : ((px + 63) ~/ 64) * 64;
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -1089,11 +1133,23 @@ class _ScreenshotViewer extends StatelessWidget {
                             child: Image.network(
                               url,
                               fit: BoxFit.contain,
+                              // IMG_L_SLIPVIEW_USE — sized for the zoom this
+                              // viewer allows rather than for whatever file is
+                              // behind the URL.
+                              cacheWidth: _zoomCachePx(context),
                               loadingBuilder: (_, child, progress) =>
                                   progress == null ? child : const AppLoader(),
-                              errorBuilder: (_, __, ___) => const AppEmptyState(
+                              // A dead link left a blank panel over the list
+                              // and an exception in the console. The agent is
+                              // about to decide on this request, so the state
+                              // has to say plainly that the slip cannot be
+                              // seen.
+                              errorBuilder: (_, _, _) => const AppEmptyState(
                                 icon: Iconsax.gallery_slash,
-                                title: 'Could not load the screenshot',
+                                title: 'ပုံကို ဖွင့်၍ မရပါ',
+                                subtitle:
+                                    'လင့်ခ် ပျက်နေခြင်း သို့မဟုတ် အင်တာနက် '
+                                    'ချိတ်ဆက်မှု ပြတ်တောက်နေခြင်း ဖြစ်နိုင်ပါသည်။',
                               ),
                             ),
                           ),
@@ -1120,8 +1176,8 @@ class _ListSkeleton extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
       physics: const NeverScrollableScrollPhysics(),
       itemCount: 5,
-      separatorBuilder: (_, __) => const SizedBox(height: 10),
-      itemBuilder: (_, __) => const AppCard(
+      separatorBuilder: (_, _) => const SizedBox(height: 10),
+      itemBuilder: (_, _) => const AppCard(
         padding: EdgeInsets.all(14),
         radius: AppTheme.radiusMd,
         child: Column(
@@ -1162,25 +1218,43 @@ class _RequestsBackdrop extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return IgnorePointer(
-      child: SafeArea(
-        bottom: false,
-        child: Align(
-          alignment: Alignment.topCenter,
-          child: ShaderMask(
-            shaderCallback: (rect) => const LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              stops: [0.0, 0.6, 1.0],
-              colors: [Colors.black, Colors.black26, Colors.transparent],
-            ).createShader(rect),
-            blendMode: BlendMode.dstIn,
-            child: Opacity(
-              opacity: 0.35,
-              child: Image.asset(
-                'assets/images/requests_hero.png',
-                width: double.infinity,
-                fit: BoxFit.contain,
+    final media = MediaQuery.of(context);
+
+    // IMG_L_REQHERO — requests_hero.png is 1200x514, 2.4 MB decoded, painted
+    // at the screen's width. On a 720p Android that width is 720 pixels, so
+    // the cache was holding two and a half times the artwork the screen can
+    // show. Rounded up to a multiple of 64 so a rotation or a split-screen
+    // resize reuses the same cache key rather than decoding a second copy.
+    final heroPixelWidth = (media.size.width * media.devicePixelRatio).ceil();
+    final heroCacheWidth = heroPixelWidth < 64
+        ? 64
+        : ((heroPixelWidth + 63) ~/ 64) * 64;
+
+    // RepaintBoundary: the ShaderMask is a saveLayer and the request list
+    // scrolls over this in a Stack, so the masked image was being
+    // re-composited on every scroll frame.
+    return RepaintBoundary(
+      child: IgnorePointer(
+        child: SafeArea(
+          bottom: false,
+          child: Align(
+            alignment: Alignment.topCenter,
+            child: ShaderMask(
+              shaderCallback: (rect) => const LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                stops: [0.0, 0.6, 1.0],
+                colors: [Colors.black, Colors.black26, Colors.transparent],
+              ).createShader(rect),
+              blendMode: BlendMode.dstIn,
+              child: Opacity(
+                opacity: 0.35,
+                child: Image.asset(
+                  'assets/images/requests_hero.png',
+                  width: double.infinity,
+                  cacheWidth: heroCacheWidth,
+                  fit: BoxFit.contain,
+                ),
               ),
             ),
           ),
@@ -1213,6 +1287,16 @@ class _RequestAvatar extends StatelessWidget {
     return _avatars[hash % _avatars.length];
   }
 
+  /// IMG_L_REQAVATAR_FN — the 42-point circle, in device pixels.
+  ///
+  /// a1.png and a2.png are 256x256, 0.26 MB each decoded, and a page of twenty
+  /// requests puts both of them in the cache. Rounded up to a multiple of 64,
+  /// which is 128 on a 2x screen and 192 on a 3x one.
+  static int _avatarCachePx(BuildContext context) {
+    final px = (42 * MediaQuery.of(context).devicePixelRatio).ceil();
+    return px < 64 ? 64 : ((px + 63) ~/ 64) * 64;
+  }
+
   @override
   Widget build(BuildContext context) {
     return SizedBox(
@@ -1226,6 +1310,10 @@ class _RequestAvatar extends StatelessWidget {
               _avatarFor(username),
               width: 42,
               height: 42,
+              // IMG_L_REQAVATAR_USE — decoded at the size of the circle. No
+              // RepaintBoundary: the card is built by a ListView.separated,
+              // which already wraps each child in one.
+              cacheWidth: _avatarCachePx(context),
               fit: BoxFit.cover,
             ),
           ),

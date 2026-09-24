@@ -476,7 +476,7 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                 padding: const EdgeInsets.symmetric(horizontal: 16),
                 clipBehavior: Clip.none,
                 itemCount: _filters.length,
-                separatorBuilder: (_, __) => const SizedBox(width: 8),
+                separatorBuilder: (_, _) => const SizedBox(width: 8),
                 itemBuilder: (context, i) {
                   final f = _filters[i];
                   final selected = _filter == f.key;
@@ -912,7 +912,7 @@ class _UrgentStrip extends StatelessWidget {
                     // the row scrolls to the card's own edge and is clipped there.
                     padding: const EdgeInsets.symmetric(horizontal: 14),
                     itemCount: users.length,
-                    separatorBuilder: (_, __) => const SizedBox(width: 12),
+                    separatorBuilder: (_, _) => const SizedBox(width: 12),
                     itemBuilder: (context, i) {
                       final user = users[i];
                       final expiry = _Expiry.of(user.expiryDate, user.status);
@@ -986,29 +986,53 @@ class _ExpiringBackdrop extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // HERO_CACHE_M_EXPIRING — expiring_hero.png is 1000x429 and decodes to
+    // 1.6 MB at full size, for a band that is never wider than the card it
+    // fills: the screen less the 16 of page padding on each side, so about
+    // 360 points. That is the width it is decoded at, rounded up to a
+    // multiple of 64 so a rotation or a split-screen resize lands on the same
+    // cache key instead of decoding a second copy.
+    //
+    // Capped at the artwork's own 1000 px. A cacheWidth above the intrinsic
+    // width makes the decoder upscale, which costs more memory than passing
+    // no cacheWidth at all — and on a 3x phone the rounded figure is 1088.
+    const assetWidth = 1000;
+    const pagePadding = 32.0; // 16 a side, from the Padding around the card
+    final slotWidth = MediaQuery.sizeOf(context).width - pagePadding;
+    final wanted = (slotWidth * MediaQuery.devicePixelRatioOf(context)).ceil();
+    final rounded = wanted < 64 ? 64 : ((wanted + 63) ~/ 64) * 64;
+    final cacheWidth = rounded > assetWidth ? assetWidth : rounded;
+
+    // RepaintBoundary: the ShaderMask below is a saveLayer, and it sits in a
+    // Stack underneath a horizontally scrolling avatar row. Without its own
+    // layer the masked image is re-composited on every frame of that scroll.
     return Positioned.fill(
-      child: IgnorePointer(
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(AppTheme.radiusLg),
-          child: Align(
-            alignment: Alignment.centerRight,
-            child: ShaderMask(
-              shaderCallback: (rect) => const LinearGradient(
-                begin: Alignment.centerLeft,
-                end: Alignment.centerRight,
-                stops: [0.0, 0.5, 1.0],
-                colors: [Colors.transparent, Colors.black26, Colors.black],
-              ).createShader(rect),
-              blendMode: BlendMode.dstIn,
-              child: Opacity(
-                // Faint. At anything stronger the hourglass and calendar read as
-                // content to look at, competing with the avatar row that is
-                // the actual point of the band. It is texture, not an image.
-                opacity: 0.15,
-                child: Image.asset(
-                  'assets/images/expiring_hero.png',
-                  fit: BoxFit.cover,
-                  alignment: Alignment.centerRight,
+      child: RepaintBoundary(
+        child: IgnorePointer(
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(AppTheme.radiusLg),
+            child: Align(
+              alignment: Alignment.centerRight,
+              child: ShaderMask(
+                shaderCallback: (rect) => const LinearGradient(
+                  begin: Alignment.centerLeft,
+                  end: Alignment.centerRight,
+                  stops: [0.0, 0.5, 1.0],
+                  colors: [Colors.transparent, Colors.black26, Colors.black],
+                ).createShader(rect),
+                blendMode: BlendMode.dstIn,
+                child: Opacity(
+                  // Faint. At anything stronger the hourglass and calendar
+                  // read as content to look at, competing with the avatar row
+                  // that is the actual point of the band. It is texture, not
+                  // an image.
+                  opacity: 0.15,
+                  child: Image.asset(
+                    'assets/images/expiring_hero.png',
+                    cacheWidth: cacheWidth,
+                    fit: BoxFit.cover,
+                    alignment: Alignment.centerRight,
+                  ),
                 ),
               ),
             ),
@@ -1050,6 +1074,20 @@ class _Avatar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // AVATAR_CACHE_M_UM — the portraits are 256x256 and decode to 0.2 MB each
+    // at full size, for a circle drawn 44 points across. Both files land in
+    // the cache rather than one: the face is picked from the username's hash,
+    // so any list longer than a couple of rows pulls in both. Decoded for the
+    // 44-point slot instead, rounded up to a multiple of 32 — 64 is a coarse
+    // quantum at this size — and never above the artwork's own 256.
+    const slot = 44;
+    const assetWidth = 256;
+    final wanted = (slot * MediaQuery.devicePixelRatioOf(context)).ceil();
+    final rounded = wanted < 32 ? 32 : ((wanted + 31) ~/ 32) * 32;
+    final cacheWidth = rounded > assetWidth ? assetWidth : rounded;
+
+    // No RepaintBoundary: every call site is a ListView item, and ListView
+    // already wraps each of its children in one.
     return SizedBox(
       width: 44,
       height: 44,
@@ -1061,6 +1099,7 @@ class _Avatar extends StatelessWidget {
               _asset,
               width: 44,
               height: 44,
+              cacheWidth: cacheWidth,
               fit: BoxFit.cover,
             ),
           ),
@@ -1241,7 +1280,7 @@ class _ListSkeletonState extends State<_ListSkeleton>
       physics: const NeverScrollableScrollPhysics(),
       itemExtent: _UserRow.heightFor(context),
       itemCount: 8,
-      itemBuilder: (_, __) => Padding(
+      itemBuilder: (_, _) => Padding(
         padding: const EdgeInsets.fromLTRB(16, 10, 12, 9),
         child: Row(
           children: [

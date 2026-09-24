@@ -993,7 +993,7 @@ class _UserInfoBar extends StatelessWidget {
             scrollDirection: Axis.horizontal,
             padding: const EdgeInsets.symmetric(horizontal: 12),
             itemCount: chips.length,
-            separatorBuilder: (_, __) => const SizedBox(width: 7),
+            separatorBuilder: (_, _) => const SizedBox(width: 7),
             itemBuilder: (_, i) => chips[i],
           ),
         ),
@@ -1291,6 +1291,32 @@ class _TextBubble extends StatelessWidget {
                                     imageUrl,
                                     width: 210,
                                     fit: BoxFit.cover,
+                                    // IMG_L_BUBBLE_PHOTO — a photo sent into a
+                                    // thread comes off a phone camera, so
+                                    // 3000x4000 is ordinary: 48 MB decoded,
+                                    // for a bubble 210 points across. Capped
+                                    // at what the bubble paints.
+                                    cacheWidth: _bubblePhotoCachePx(context),
+                                    // Scrolling back through a month of photos
+                                    // showed empty bubbles while each one
+                                    // downloaded, which looks the same as one
+                                    // that has failed.
+                                    loadingBuilder: (_, child, progress) =>
+                                        progress == null
+                                        ? child
+                                        : Container(
+                                            width: 210,
+                                            height: 120,
+                                            color: AppColors.surfaceAlt,
+                                            alignment: Alignment.center,
+                                            child: const SizedBox(
+                                              width: 20,
+                                              height: 20,
+                                              child: CircularProgressIndicator(
+                                                strokeWidth: 2,
+                                              ),
+                                            ),
+                                          ),
                                     errorBuilder: (_, _, _) => Container(
                                       width: 210,
                                       height: 120,
@@ -1385,6 +1411,13 @@ class _TextBubble extends StatelessWidget {
     );
   }
 
+  /// IMG_L_BUBBLE_FN — 210 points, the width the bubble paints a photo at,
+  /// in device pixels and rounded up to a multiple of 64. 640 on a 3x screen.
+  static int _bubblePhotoCachePx(BuildContext context) {
+    final px = (210 * MediaQuery.of(context).devicePixelRatio).ceil();
+    return px < 64 ? 64 : ((px + 63) ~/ 64) * 64;
+  }
+
   static String _time(String raw) {
     final parsed = DateTime.tryParse(raw);
     if (parsed == null) return '';
@@ -1414,6 +1447,21 @@ class _RenewalBubble extends StatelessWidget {
     required this.onReject,
     required this.onOpenImage,
   });
+
+  /// IMG_L_SLIP_FN — the slip strip below is 120 points tall and as wide as
+  /// the bubble allows, which is the screen less the list padding, the
+  /// bubble's own right inset and the card padding.
+  ///
+  /// The screen's width is used as the bound rather than that arithmetic: it
+  /// over-provisions by about a quarter, and in exchange a later change to any
+  /// of those paddings cannot silently make the decode too small and leave a
+  /// soft slip behind. It still caps a 3000-pixel camera photo at the width
+  /// the phone can actually paint.
+  static int _slipStripCachePx(BuildContext context) {
+    final media = MediaQuery.of(context);
+    final px = (media.size.width * media.devicePixelRatio).ceil();
+    return px < 64 ? 64 : ((px + 63) ~/ 64) * 64;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1477,6 +1525,28 @@ class _RenewalBubble extends StatelessWidget {
                     height: 120,
                     width: double.infinity,
                     fit: BoxFit.cover,
+                    // IMG_L_SLIP_STRIP — the payment slip attached to a
+                    // renewal, decoded at the width this strip paints rather
+                    // than at whatever the user's camera produced.
+                    cacheWidth: _slipStripCachePx(context),
+                    // The strip is the agent's first look at the slip, and it
+                    // was blank until the download finished. width here
+                    // because the image it stands in for is double.infinity
+                    // and a Container sized by its child would be a 20-point
+                    // sliver rather than the strip.
+                    loadingBuilder: (_, child, progress) => progress == null
+                        ? child
+                        : Container(
+                            height: 120,
+                            width: double.infinity,
+                            color: AppColors.surfaceAlt,
+                            alignment: Alignment.center,
+                            child: const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            ),
+                          ),
                     errorBuilder: (_, _, _) => Container(
                       height: 120,
                       color: AppColors.surfaceAlt,
@@ -2001,6 +2071,17 @@ class _Avatar extends StatelessWidget {
     return _avatars[hash % _avatars.length];
   }
 
+  /// IMG_L_BARAVATAR_FN — the circle's own size in device pixels.
+  ///
+  /// a1.png and a2.png are 256x256, 0.26 MB apiece once decoded. This draws
+  /// one at 34 points in the app bar, so the whole decode was being kept to
+  /// paint an eighth of it. Rounded up to a multiple of 64 so a rotation does
+  /// not produce a second cache key for the same face.
+  int _cachePx(BuildContext context) {
+    final px = (size * MediaQuery.of(context).devicePixelRatio).ceil();
+    return px < 64 ? 64 : ((px + 63) ~/ 64) * 64;
+  }
+
   @override
   Widget build(BuildContext context) {
     return SizedBox(
@@ -2014,6 +2095,10 @@ class _Avatar extends StatelessWidget {
               _asset,
               width: size,
               height: size,
+              // IMG_L_BARAVATAR_USE — decoded at the size of the circle. No
+              // RepaintBoundary: this one lives in an AppBar title, which is
+              // not repainted by the thread scrolling beneath it.
+              cacheWidth: _cachePx(context),
               fit: BoxFit.cover,
             ),
           ),
@@ -2043,6 +2128,22 @@ class _ImageViewer extends StatelessWidget {
 
   const _ImageViewer({required this.url, required this.isLocal});
 
+  /// IMG_L_VIEWER_FN — twice the device's pixel width, rounded up to a
+  /// multiple of 64.
+  ///
+  /// Not the plain screen width: the InteractiveViewer below zooms to 5x, and
+  /// a slip is opened here to read an account number and a transfer reference
+  /// off it, so a decode sized to the unzoomed screen would turn the one thing
+  /// the agent came for into mush. Twice the screen is the compromise — a
+  /// 3000x4000 camera photo comes down from roughly 48 MB to 30 MB, and more
+  /// to the point the ceiling stops depending on the user's camera. The copy
+  /// is released when the viewer is popped.
+  static int _zoomCachePx(BuildContext context) {
+    final media = MediaQuery.of(context);
+    final px = (media.size.width * media.devicePixelRatio * 2).ceil();
+    return px < 64 ? 64 : ((px + 63) ~/ 64) * 64;
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -2060,6 +2161,9 @@ class _ImageViewer extends StatelessWidget {
               : Image.network(
                   url,
                   fit: BoxFit.contain,
+                  // IMG_L_VIEWER_ZOOM — sized for the zoom this viewer allows,
+                  // not for the file that happens to be behind the URL.
+                  cacheWidth: _zoomCachePx(context),
                   loadingBuilder: (_, child, progress) =>
                       progress == null ? child : const AppLoader(),
                   errorBuilder: (_, _, _) => const AppEmptyState(

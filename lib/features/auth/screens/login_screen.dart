@@ -124,6 +124,22 @@ class _LoginViewState extends State<_LoginView> {
     final l10n = AppLocalizations.of(context);
     final t = Theme.of(context).textTheme;
 
+    // HERO_CACHE_LOGIN_V1 — login_hero.png is 1170x837, which is 3.7 MB once
+    // the engine has decoded it, and it is the first image this app ever
+    // draws: nothing has been evicted yet when it lands in the cache.
+    //
+    // The strip it is drawn into is the scroll view's content width — the
+    // screen minus the 24pt gutter on each side — so that is what it is
+    // decoded at rather than the size the file happens to be authored at.
+    // Rounded up to a multiple of 64 so a rotation or a split-screen resize
+    // lands on the same cache key instead of decoding a second copy.
+    final media = MediaQuery.of(context);
+    final heroPixelWidth =
+        ((media.size.width - 48) * media.devicePixelRatio).ceil();
+    final heroCacheWidth = heroPixelWidth < 64
+        ? 64
+        : ((heroPixelWidth + 63) ~/ 64) * 64;
+
     return BlocListener<AgentLoginBloc, AgentLoginState>(
       listener: (context, state) async {
         if (state.status == AgentLoginStatus.failure) {
@@ -163,9 +179,17 @@ class _LoginViewState extends State<_LoginView> {
                       children: [
                         FadeInUp(
                           slideOffset: 0.08,
-                          child: Image.asset(
-                            'assets/images/login_hero.png',
-                            fit: BoxFit.contain,
+                          // HERO_CACHE_LOGIN_IMG — the RepaintBoundary is for
+                          // the entrance animation: FadeInUp is a
+                          // FadeTransition over a SlideTransition, and without
+                          // its own layer the hero is re-rasterised on every
+                          // frame of it.
+                          child: RepaintBoundary(
+                            child: Image.asset(
+                              'assets/images/login_hero.png',
+                              cacheWidth: heroCacheWidth,
+                              fit: BoxFit.contain,
+                            ),
                           ),
                         ),
                         const SizedBox(height: 20),

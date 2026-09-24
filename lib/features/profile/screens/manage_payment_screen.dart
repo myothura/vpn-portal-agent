@@ -201,7 +201,7 @@ class _ManagePaymentScreenState extends State<ManagePaymentScreen> {
                       padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
                       physics: const BouncingScrollPhysics(),
                       itemCount: _methods.length,
-                      separatorBuilder: (_, __) => const SizedBox(height: 10),
+                      separatorBuilder: (_, _) => const SizedBox(height: 10),
                       itemBuilder: (context, i) => _MethodCard(
                         method: _methods[i],
                         onEdit: () =>
@@ -375,10 +375,30 @@ class _QrThumb extends StatelessWidget {
     if (local != null) {
       child = Image.file(File(local), fit: BoxFit.cover);
     } else if (remote != null && remote.isNotEmpty) {
+      // IMG_L_QR_THUMB — the thumb below is 54x54. The QR behind it is
+      // whatever the agent uploaded, commonly a full-screen grab of a banking
+      // app, so a 1000-pixel square at 4 MB decoded is normal — for a tile
+      // smaller than a fingertip, drawn twice on this screen (once on the card
+      // and once inside the editor sheet).
+      //
+      // 54 points in device pixels, rounded up to a multiple of 64: 128 on a
+      // 2x screen, 192 on a 3x one.
+      final px = (54 * MediaQuery.of(context).devicePixelRatio).ceil();
+      final cacheWidth = px < 64 ? 64 : ((px + 63) ~/ 64) * 64;
       child = Image.network(
         remote,
         fit: BoxFit.cover,
-        errorBuilder: (_, __, ___) => const Icon(
+        cacheWidth: cacheWidth,
+        // A QR still downloading was an empty grey square, which is exactly
+        // what a method with no QR at all looks like.
+        loadingBuilder: (_, image, progress) => progress == null
+            ? image
+            : const SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+        errorBuilder: (_, _, _) => const Icon(
           Iconsax.gallery_slash,
           size: 18,
           color: AppColors.textTertiary,

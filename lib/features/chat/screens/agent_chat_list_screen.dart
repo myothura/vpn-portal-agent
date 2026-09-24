@@ -625,6 +625,21 @@ class _ChatRow extends StatelessWidget {
     return _avatars[hash % _avatars.length];
   }
 
+  /// IMG_L_LISTAVATAR_FN — the 46-point circle, in device pixels.
+  ///
+  /// a1.png and a2.png are 256x256 — 0.26 MB each once decoded — and both land
+  /// in the image cache as soon as this list paints, which is the first thing
+  /// this tab shows. Nothing on screen draws them wider than 46 points, so
+  /// every pixel past that was decoded and then thrown away at paint time.
+  ///
+  /// Rounded up to a multiple of 64 — 128 on a 2x screen, 192 on a 3x one — so
+  /// a rotation or a text-scale change lands on the same cache key instead of
+  /// decoding a second copy.
+  static int _avatarCachePx(BuildContext context) {
+    final px = (46 * MediaQuery.of(context).devicePixelRatio).ceil();
+    return px < 64 ? 64 : ((px + 63) ~/ 64) * 64;
+  }
+
   static String _timeAgo(String raw) {
     if (raw.isEmpty) return '';
     final parsed = DateTime.tryParse(raw);
@@ -676,6 +691,12 @@ class _ChatRow extends StatelessWidget {
                       _avatarFor(username),
                       width: 46,
                       height: 46,
+                      // IMG_L_LISTAVATAR_USE — decoded at the size of the
+                      // circle it is drawn into. No RepaintBoundary: this row
+                      // is built by a ListView.builder, which already wraps
+                      // every child in one, and a second inside it would only
+                      // add a layer.
+                      cacheWidth: _avatarCachePx(context),
                       fit: BoxFit.cover,
                     ),
                   ),
@@ -940,7 +961,7 @@ class _ListSkeleton extends StatelessWidget {
       physics: const NeverScrollableScrollPhysics(),
       itemExtent: _ChatRow.height,
       itemCount: 8,
-      itemBuilder: (_, __) => const Padding(
+      itemBuilder: (_, _) => const Padding(
         padding: EdgeInsets.fromLTRB(16, 11, 14, 11),
         child: Row(
           children: [
@@ -975,31 +996,54 @@ class _ChatHeroBackdrop extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return IgnorePointer(
-      // Below the status bar, not under it: the artwork was running up behind
-      // the clock and the battery icon, which is neither legible nor intended.
-      child: SafeArea(
-        bottom: false,
-        child: Align(
-          alignment: Alignment.topCenter,
-          child: ShaderMask(
-            shaderCallback: (rect) => const LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              stops: [0.0, 0.6, 1.0],
-              colors: [Colors.black, Colors.black26, Colors.transparent],
-            ).createShader(rect),
-            blendMode: BlendMode.dstIn,
-            child: Opacity(
-              opacity: 0.35,
-              child: Image.asset(
-                'assets/images/chat_hero.png',
-                width: double.infinity,
-                // contain, not cover: cover cropped the artwork to the band's
-                // height and took the figure's head with it. The whole
-                // illustration is shown, scaled to the screen width, and the
-                // gradient fades its lower half into the list.
-                fit: BoxFit.contain,
+    final media = MediaQuery.of(context);
+
+    // IMG_L_CHATHERO — chat_hero.png is 1200x671, which is 3.1 MB once the
+    // engine has decoded it, and it is painted at the screen's width. On a
+    // 720p Android — the phones this app is mostly installed on — that width
+    // is 720 pixels, so two thirds of the decode was being thrown away at
+    // paint time and kept in the cache anyway.
+    //
+    // The same computation as _DashboardBackdrop: the painted width in device
+    // pixels, rounded up to a multiple of 64 so a rotation or a split-screen
+    // resize lands on the same cache key instead of decoding a second copy.
+    final heroPixelWidth = (media.size.width * media.devicePixelRatio).ceil();
+    final heroCacheWidth = heroPixelWidth < 64
+        ? 64
+        : ((heroPixelWidth + 63) ~/ 64) * 64;
+
+    // RepaintBoundary: this sits behind a scrolling ListView inside a Stack
+    // and the ShaderMask below is a saveLayer, so without a layer of its own
+    // the masked image was re-composited on every scroll frame.
+    return RepaintBoundary(
+      child: IgnorePointer(
+        // Below the status bar, not under it: the artwork was running up
+        // behind the clock and the battery icon, which is neither legible nor
+        // intended.
+        child: SafeArea(
+          bottom: false,
+          child: Align(
+            alignment: Alignment.topCenter,
+            child: ShaderMask(
+              shaderCallback: (rect) => const LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                stops: [0.0, 0.6, 1.0],
+                colors: [Colors.black, Colors.black26, Colors.transparent],
+              ).createShader(rect),
+              blendMode: BlendMode.dstIn,
+              child: Opacity(
+                opacity: 0.35,
+                child: Image.asset(
+                  'assets/images/chat_hero.png',
+                  width: double.infinity,
+                  cacheWidth: heroCacheWidth,
+                  // contain, not cover: cover cropped the artwork to the
+                  // band's height and took the figure's head with it. The
+                  // whole illustration is shown, scaled to the screen width,
+                  // and the gradient fades its lower half into the list.
+                  fit: BoxFit.contain,
+                ),
               ),
             ),
           ),

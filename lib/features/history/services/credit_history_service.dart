@@ -20,7 +20,9 @@ class CreditHistoryService {
         ApiConfig.agentCreditHistory,
         queryParameters: {
           'page': page,
-          if (type != null) 'type': type,
+          // AGENT_APP_P1 — null-aware element: the entry is left out when the
+          // value is null, which is what the `if` was spelling out by hand.
+          'type': ?type,
         },
       );
 

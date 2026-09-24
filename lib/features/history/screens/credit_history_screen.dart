@@ -38,6 +38,20 @@ class _CreditHistoryScreenState extends State<CreditHistoryScreen> {
   int _page = 1;
   int _lastPage = 1;
 
+  /// FAIL_L_FIELD — the last fetch came back with nothing and there is nothing
+  /// already on screen.
+  ///
+  /// CreditHistoryService.getCreditHistory returns null for every failure it
+  /// can have — a timeout, a 500, a token the server has stopped accepting —
+  /// and this screen drew the same "No transactions" state for all of them as
+  /// it does for a ledger that is genuinely empty. An agent checking whether
+  /// an administrator's top-up had landed was being told that it had not.
+  ///
+  /// Only true when the screen is blank. A page that fails while rows are
+  /// already up keeps the rows and says nothing, which is how the requests
+  /// screen and the conversation list both behave.
+  bool _failed = false;
+
   // The column is enum('add','spend'); there is no 'topup' or 'refund'.
   static const _tabs = <(String?, String)>[
     (null, 'All'),
@@ -87,6 +101,14 @@ class _CreditHistoryScreenState extends State<CreditHistoryScreen> {
         _lastPage = response.lastPage;
         if (response.totals.isNotEmpty) _totals = response.totals;
         if (response.counts.isNotEmpty) _counts = response.counts;
+        _failed = false;
+      } else {
+        // FAIL_L_LOAD — a refresh has already emptied _rows above, so a failed
+        // refresh always lands here with a blank screen and reports it. A page
+        // that fails behind rows already on screen leaves them alone and says
+        // nothing: the agent is reading them, and a full-screen error over a
+        // working list would be worse than a page that quietly did not arrive.
+        _failed = _rows.isEmpty;
       }
       _loading = false;
       _loadingMore = false;
@@ -140,7 +162,7 @@ class _CreditHistoryScreenState extends State<CreditHistoryScreen> {
               scrollDirection: Axis.horizontal,
               padding: const EdgeInsets.symmetric(horizontal: 16),
               itemCount: _tabs.length,
-              separatorBuilder: (_, __) => const SizedBox(width: 8),
+              separatorBuilder: (_, _) => const SizedBox(width: 8),
               itemBuilder: (context, i) {
                 final (type, label) = _tabs[i];
                 return _FilterChip(
@@ -157,7 +179,10 @@ class _CreditHistoryScreenState extends State<CreditHistoryScreen> {
             child: _loading
                 ? const _ListSkeleton()
                 : _rows.isEmpty
-                ? _buildEmpty()
+                // FAIL_L_BRANCH — an empty ledger and a ledger that would not
+                // load are different facts, and only one of them is something
+                // the agent can act on.
+                ? (_failed ? _buildFailed() : _buildEmpty())
                 : RefreshIndicator(
                     onRefresh: () => _load(refresh: true),
                     color: AppColors.accentInk,
@@ -206,6 +231,19 @@ class _CreditHistoryScreenState extends State<CreditHistoryScreen> {
       ),
     );
   }
+
+  /// FAIL_L_STATE — shown instead of the empty state when the fetch failed.
+  ///
+  /// The same shape as the requests screen's: an icon that says network rather
+  /// than ledger, the reason in Burmese, and the retry on the state itself, so
+  /// the agent is not left to guess that pulling down is the way back.
+  Widget _buildFailed() => AppEmptyState(
+    icon: Iconsax.cloud_cross,
+    title: 'မှတ်တမ်း ဆွဲယူ၍ မရပါ',
+    subtitle: 'အင်တာနက် ချိတ်ဆက်မှုကို စစ်ဆေးပြီး ထပ်မံ ကြိုးစားပါ။',
+    actionLabel: 'ထပ်မံကြိုးစားမည်',
+    onAction: () => _load(refresh: true),
+  );
 
   Widget _buildEmpty() => switch (_filter) {
     'add' => const AppEmptyState(
@@ -567,7 +605,7 @@ class _ListSkeletonState extends State<_ListSkeleton>
       padding: const EdgeInsets.only(top: 4),
       physics: const NeverScrollableScrollPhysics(),
       itemCount: 8,
-      itemBuilder: (_, __) => Padding(
+      itemBuilder: (_, _) => Padding(
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
         child: Row(
           children: [

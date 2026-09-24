@@ -38,7 +38,8 @@ class ProfitLossService {
       final response = await _dio.get(
         '/agent/profit-loss',
         queryParameters: {
-          if (month != null) 'month': month,
+          // AGENT_APP_P1 — null-aware element; same meaning as the `if`.
+          'month': ?month,
           'page': page,
           'per_page': perPage,
         },

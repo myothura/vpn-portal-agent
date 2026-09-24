@@ -241,35 +241,83 @@ class AppStatusBanner extends StatelessWidget {
         children: [
           if (backdropAsset != null)
             Positioned.fill(
+              // IMG_L_BANNER_ART — the banner's artwork, decoded at the size
+              // it is painted at.
+              //
+              // The asset name is chosen on the dashboard but the decoding
+              // happens here, so this is where cacheWidth belongs. Without it
+              // the engine decoded the whole file: expiring_hero.png is
+              // 1000x429, which is 1.6 MB held in the image cache to paint a
+              // strip narrower than a thumb.
+              //
+              // The Stack this fills sizes itself to the Row beside it, so the
+              // box is about 34 points tall, and an Image given neither width
+              // nor height fits itself inside its constraints preserving the
+              // aspect ratio — which makes the painted width the box's height
+              // times the artwork's aspect, not the width of the screen.
+              // Bounded at 3:1, wider than any hero in assets/ (requests_hero
+              // is the widest at 2.33:1), so the decode is never under what is
+              // drawn, and capped at the banner's own width in case a tall
+              // asset is ever passed.
+              //
+              // Rounded up to a multiple of 64 so a rotation or a text-scale
+              // change lands on the same cache key rather than decoding a
+              // second copy beside the first.
               child: IgnorePointer(
-                child: ClipRRect(
-                  borderRadius: BorderRadius.zero,
-                  child: Align(
-                    alignment: Alignment.centerRight,
-                    child: ShaderMask(
-                      shaderCallback: (rect) => const LinearGradient(
-                        begin: Alignment.centerLeft,
-                        end: Alignment.centerRight,
-                        // Faded in from the left so it never reaches the text.
-                        stops: [0.0, 0.45, 1.0],
-                        colors: [
-                          Colors.transparent,
-                          Colors.black26,
-                          Colors.black,
-                        ],
-                      ).createShader(rect),
-                      blendMode: BlendMode.dstIn,
-                      child: Opacity(
-                        // Full strength: on the all-clear the banner carries
-                        // one short line and the artwork is the rest of it.
-                        opacity: 1.0,
-                        child: Image.asset(
-                          backdropAsset!,
-                          fit: BoxFit.cover,
+                // RepaintBoundary: the ShaderMask below is a saveLayer, and
+                // this banner sits in a scrolling list with an entrance
+                // animation running over it. Its own layer keeps the masked
+                // image out of the surrounding repaints.
+                child: RepaintBoundary(
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      final media = MediaQuery.of(context);
+                      final maxWidth = constraints.maxWidth.isFinite
+                          ? constraints.maxWidth
+                          : media.size.width;
+                      final slot = constraints.maxHeight.isFinite
+                          ? constraints.maxHeight * 3
+                          : maxWidth;
+                      final painted = slot < maxWidth ? slot : maxWidth;
+                      final px = (painted * media.devicePixelRatio).ceil();
+                      final cacheWidth = px < 64
+                          ? 64
+                          : ((px + 63) ~/ 64) * 64;
+
+                      return ClipRRect(
+                        borderRadius: BorderRadius.zero,
+                        child: Align(
                           alignment: Alignment.centerRight,
+                          child: ShaderMask(
+                            shaderCallback: (rect) => const LinearGradient(
+                              begin: Alignment.centerLeft,
+                              end: Alignment.centerRight,
+                              // Faded in from the left so it never reaches the
+                              // text.
+                              stops: [0.0, 0.45, 1.0],
+                              colors: [
+                                Colors.transparent,
+                                Colors.black26,
+                                Colors.black,
+                              ],
+                            ).createShader(rect),
+                            blendMode: BlendMode.dstIn,
+                            child: Opacity(
+                              // Full strength: on the all-clear the banner
+                              // carries one short line and the artwork is the
+                              // rest of it.
+                              opacity: 1.0,
+                              child: Image.asset(
+                                backdropAsset!,
+                                cacheWidth: cacheWidth,
+                                fit: BoxFit.cover,
+                                alignment: Alignment.centerRight,
+                              ),
+                            ),
+                          ),
                         ),
-                      ),
-                    ),
+                      );
+                    },
                   ),
                 ),
               ),

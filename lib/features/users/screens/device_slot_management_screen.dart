@@ -11,7 +11,12 @@ import 'package:vpn_agent_app/shared_widgets/ui/app_surface.dart';
 // C_LISTS_DS_IMPORTS — intl is gone: both NumberFormats this file built now
 // point at Fmt, which builds one and keeps it. One of them sat in the price
 // bar's build().
+//
+// M_DS_CONFIRM_IMPORT — and the two AlertDialogs this file wrote by hand are
+// gone as well: both slot confirmations ask through the shared confirmAction,
+// the same one the renewal and transfer confirmations use.
 import '../../../core/utils/formatters.dart';
+import '../../../core/widgets/confirm_dialog.dart';
 
 import 'package:vpn_agent_app/features/dashboard/models/dashboard_model.dart';
 import 'package:vpn_agent_app/features/dashboard/services/dashboard_service.dart';
@@ -161,69 +166,42 @@ class _DeviceSlotManagementScreenState
   // ── Actions ─────────────────────────────────────────────────────────────
 
   Future<void> _addSlot(VpnUser user) async {
-    // C_LISTS_DS_DIALOGFMT — the shared instance, not a new one per tap.
-    final money = Fmt.money;
-    final affordable = _balance == null || _slotPrice <= _balance!;
+    // M_DS_ADD_CONFIRM — this was a hand-rolled AlertDialog. Nothing it said
+    // is lost: the account, the before and after device count and the exact
+    // charge are all still in front of the agent before the tap, now as the
+    // same labelled rows every other credit-spending confirmation uses.
+    //
+    // The old dialog opened with its confirm button disabled and "Over your
+    // balance" under the price when the charge was out of reach. confirmAction
+    // has no disabled state, so a charge the balance cannot cover is refused
+    // before the dialog opens instead of inside it, with that same sentence.
+    // The tap ends in the same place, one step earlier.
+    final balance = _balance;
+    if (balance != null && _slotPrice > balance) {
+      _toast('Over your balance');
+      return;
+    }
 
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        icon: const AppIconBadge(
-          icon: Iconsax.mobile,
-          color: AppColors.info,
-          background: AppColors.infoWash,
-          size: 22,
-          padding: 12,
+    final ok = await confirmAction(
+      context,
+      title: 'Add a device slot?',
+      message:
+          'ဤနေရာအတွက် Credit ကို ယခု နုတ်ယူပါမည်။ '
+          'နောက်ထပ် သက်တမ်းတိုးတိုင်း ထပ်မံ ကောက်ခံပါမည်။',
+      confirmLabel: 'Add slot',
+      details: [
+        ConfirmDetail('အသုံးပြုသူ', user.username),
+        ConfirmDetail(
+          'စက်ပစ္စည်း',
+          '${user.extraDeviceSlots + 1} → ${user.extraDeviceSlots + 2}',
         ),
-        title: const Text('Add a device slot?'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              '${user.username} goes from ${user.extraDeviceSlots + 1} to '
-              '${user.extraDeviceSlots + 2} devices.',
-              style: Theme.of(ctx).textTheme.bodyMedium,
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Text('Cost', style: Theme.of(ctx).textTheme.bodyMedium),
-                const Spacer(),
-                Text(
-                  money.format(_slotPrice),
-                  style: Theme.of(ctx).textTheme.titleMedium?.copyWith(
-                    color: affordable
-                        ? AppColors.textPrimary
-                        : AppColors.danger,
-                  ),
-                ),
-              ],
-            ),
-            if (!affordable) ...[
-              const SizedBox(height: 4),
-              Text(
-                'Over your balance',
-                style: Theme.of(
-                  ctx,
-                ).textTheme.bodySmall?.copyWith(color: AppColors.danger),
-              ),
-            ],
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: affordable ? () => Navigator.pop(ctx, true) : null,
-            child: const Text('Add slot'),
-          ),
-        ],
-      ),
+        // C_LISTS_DS_DIALOGFMT — the shared instance, not a new one per tap.
+        ConfirmDetail('Cost', Fmt.money.format(_slotPrice), emphasise: true),
+        if (balance != null)
+          ConfirmDetail('Balance', Fmt.money.format(balance)),
+      ],
     );
-    if (ok != true) return;
+    if (!ok) return;
 
     setState(() => _busyIds.add(user.id));
     final success = await _userService.addDeviceSlots(user.id, 1);
@@ -242,39 +220,32 @@ class _DeviceSlotManagementScreenState
   }
 
   Future<void> _removeSlot(VpnUser user) async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        icon: const AppIconBadge(
-          icon: Iconsax.mobile_programming,
-          color: AppColors.warning,
-          background: AppColors.warningWash,
-          size: 22,
-          padding: 12,
+    // M_DS_REMOVE_CONFIRM — the same move as the add dialog. The sentence
+    // about the refund is the whole point of this confirmation, so it stays
+    // word for word as the message; the account and the device count the tap
+    // changes are the labelled rows under it.
+    //
+    // destructive: true — no credit changes hands, but the slot cannot be got
+    // back without paying for it a second time, and that is what the red
+    // treatment means everywhere else in this app.
+    final ok = await confirmAction(
+      context,
+      title: 'Remove a device slot?',
+      // Stated outright: the server issues no refund, and an agent who
+      // assumed otherwise would only find out by checking their balance.
+      message: 'No credit is refunded for removing a slot.',
+      confirmLabel: 'Remove',
+      destructive: true,
+      details: [
+        ConfirmDetail('အသုံးပြုသူ', user.username),
+        ConfirmDetail(
+          'စက်ပစ္စည်း',
+          '${user.extraDeviceSlots + 1} → ${user.extraDeviceSlots}',
+          emphasise: true,
         ),
-        title: const Text('Remove a device slot?'),
-        content: Text(
-          '${user.username} goes from ${user.extraDeviceSlots + 1} to '
-          '${user.extraDeviceSlots} devices.\n\n'
-          // Stated outright: the server issues no refund, and an agent who
-          // assumed otherwise would only find out by checking their balance.
-          'No credit is refunded for removing a slot.',
-          style: Theme.of(ctx).textTheme.bodyMedium,
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: AppColors.warning),
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Remove'),
-          ),
-        ],
-      ),
+      ],
     );
-    if (ok != true) return;
+    if (!ok) return;
 
     setState(() => _busyIds.add(user.id));
     final success = await _userService.removeDeviceSlots(user.id, 1);
@@ -549,6 +520,19 @@ class _SlotRow extends StatelessWidget {
     final extra = user.extraDeviceSlots;
     final total = extra + 1;
 
+    // AVATAR_CACHE_M_DS — 256x256 of artwork, 0.2 MB decoded, for a circle
+    // drawn 42 points across; and both files reach the cache, because the
+    // face comes from the username's hash. Decoded for the 42-point slot,
+    // rounded up to a multiple of 32 and never above the artwork's own 256.
+    //
+    // No RepaintBoundary: this row is a ListView item and ListView already
+    // wraps each of its children in one.
+    const slot = 42;
+    const assetWidth = 256;
+    final wanted = (slot * MediaQuery.devicePixelRatioOf(context)).ceil();
+    final rounded = wanted < 32 ? 32 : ((wanted + 31) ~/ 32) * 32;
+    final cacheWidth = rounded > assetWidth ? assetWidth : rounded;
+
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 10, 12, 10),
       child: Row(
@@ -558,6 +542,7 @@ class _SlotRow extends StatelessWidget {
               _avatarFor(user.username),
               width: 42,
               height: 42,
+              cacheWidth: cacheWidth,
               fit: BoxFit.cover,
             ),
           ),
@@ -726,7 +711,7 @@ class _ListSkeletonState extends State<_ListSkeleton>
     return ListView.builder(
       physics: const NeverScrollableScrollPhysics(),
       itemCount: 8,
-      itemBuilder: (_, __) => Padding(
+      itemBuilder: (_, _) => Padding(
         padding: const EdgeInsets.fromLTRB(16, 10, 12, 10),
         child: Row(
           children: [

@@ -478,23 +478,44 @@ class _HeroBackdrop extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return IgnorePointer(
-      child: Align(
-        alignment: Alignment.topCenter,
-        child: ShaderMask(
-          shaderCallback: (rect) => const LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            stops: [0.0, 0.55, 1.0],
-            colors: [Colors.black, Colors.black26, Colors.transparent],
-          ).createShader(rect),
-          blendMode: BlendMode.dstIn,
-          child: Opacity(
-            opacity: 0.30,
-            child: Image.asset(
-              'assets/images/user_hero.png',
-              height: 260,
-              fit: BoxFit.contain,
+    // HERO_CACHE_AGENT_V1 — user_hero.png is 900x711 and decodes to 2.4 MB.
+    //
+    // This backdrop is capped at 260pt tall inside a full-width Stack, so the
+    // widest it can ever be painted is the screen. Decoding at that width
+    // instead of the asset's own is what caps the cache entry on a 2x screen
+    // (720 wide rather than 900); ResizeImage clamps the target to the
+    // asset's real width and never upscales, so a 3x screen decodes exactly
+    // what it does today. Rounded up to a multiple of 64 so a rotation does
+    // not add a second entry for the same picture.
+    final media = MediaQuery.of(context);
+    final heroPixelWidth = (media.size.width * media.devicePixelRatio).ceil();
+    final heroCacheWidth = heroPixelWidth < 64
+        ? 64
+        : ((heroPixelWidth + 63) ~/ 64) * 64;
+
+    // RepaintBoundary: the form scrolls over this inside a Stack and the
+    // ShaderMask below is a saveLayer, so without its own layer the masked
+    // artwork is re-composited on every scroll frame.
+    return RepaintBoundary(
+      child: IgnorePointer(
+        child: Align(
+          alignment: Alignment.topCenter,
+          child: ShaderMask(
+            shaderCallback: (rect) => const LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              stops: [0.0, 0.55, 1.0],
+              colors: [Colors.black, Colors.black26, Colors.transparent],
+            ).createShader(rect),
+            blendMode: BlendMode.dstIn,
+            child: Opacity(
+              opacity: 0.30,
+              child: Image.asset(
+                'assets/images/user_hero.png',
+                height: 260,
+                cacheWidth: heroCacheWidth,
+                fit: BoxFit.contain,
+              ),
             ),
           ),
         ),

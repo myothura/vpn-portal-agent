@@ -487,24 +487,48 @@ class _HeroBackdrop extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return IgnorePointer(
-      child: Align(
-        alignment: Alignment.topCenter,
-        child: ShaderMask(
-          shaderCallback: (rect) => const LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            stops: [0.0, 0.55, 1.0],
-            colors: [Colors.black, Colors.black26, Colors.transparent],
-          ).createShader(rect),
-          blendMode: BlendMode.dstIn,
-          child: Opacity(
-            // Faint enough that text over it stays legible without a scrim.
-            opacity: 0.30,
-            child: Image.asset(
-              'assets/images/user_hero.png',
-              height: 260,
-              fit: BoxFit.contain,
+    // HERO_CACHE_M_EDITUSER — user_hero.png is 900x711 and decodes to 2.4 MB at
+    // full size. It is never painted that big: the height is pinned at 260
+    // and the fit is contain, so at the artwork's own aspect it lands about
+    // 329 points wide. That is the width it is decoded at, rounded up to a
+    // multiple of 64 so a rotation or a split-screen resize lands on the same
+    // cache key instead of decoding a second copy.
+    //
+    // Capped at 900, the artwork's own width. On a 3x phone the rounded
+    // figure is 1024, and a cacheWidth above the intrinsic width makes the
+    // decoder upscale — 1024x809x4 is 3.3 MB, worse than no cacheWidth at all.
+    const assetWidth = 900;
+    const assetHeight = 711;
+    const drawnHeight = 260.0;
+    const drawnWidth = drawnHeight * assetWidth / assetHeight;
+    final wanted = (drawnWidth * MediaQuery.devicePixelRatioOf(context)).ceil();
+    final rounded = wanted < 64 ? 64 : ((wanted + 63) ~/ 64) * 64;
+    final cacheWidth = rounded > assetWidth ? assetWidth : rounded;
+
+    // RepaintBoundary: the ShaderMask is a saveLayer and the whole form
+    // scrolls over it in the same Stack, so without its own layer the masked
+    // image is re-composited on every scroll frame.
+    return RepaintBoundary(
+      child: IgnorePointer(
+        child: Align(
+          alignment: Alignment.topCenter,
+          child: ShaderMask(
+            shaderCallback: (rect) => const LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              stops: [0.0, 0.55, 1.0],
+              colors: [Colors.black, Colors.black26, Colors.transparent],
+            ).createShader(rect),
+            blendMode: BlendMode.dstIn,
+            child: Opacity(
+              // Faint enough that text over it stays legible without a scrim.
+              opacity: 0.30,
+              child: Image.asset(
+                'assets/images/user_hero.png',
+                height: 260,
+                cacheWidth: cacheWidth,
+                fit: BoxFit.contain,
+              ),
             ),
           ),
         ),

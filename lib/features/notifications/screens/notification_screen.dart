@@ -654,8 +654,8 @@ class _ListSkeletonState extends State<_ListSkeleton>
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
       physics: const NeverScrollableScrollPhysics(),
       itemCount: 6,
-      separatorBuilder: (_, __) => const SizedBox(height: 10),
-      itemBuilder: (_, __) => AppCard(
+      separatorBuilder: (_, _) => const SizedBox(height: 10),
+      itemBuilder: (_, _) => AppCard(
         padding: const EdgeInsets.all(14),
         radius: AppTheme.radiusMd,
         child: Row(

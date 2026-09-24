@@ -23,7 +23,8 @@ class RenewalRequestService {
           // Omitted entirely when null: the backend treats an unrecognised
           // status as "no filter", but sending an empty string would still
           // read as a deliberate parameter.
-          if (status != null) 'status': status,
+          // AGENT_APP_P1 — null-aware element; same meaning as the `if`.
+          'status': ?status,
         },
       );
 
