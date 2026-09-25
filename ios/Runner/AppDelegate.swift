@@ -26,6 +26,11 @@ import flutter_local_notifications
       UNUserNotificationCenter.current().delegate = self as? UNUserNotificationCenterDelegate
     }
 
+    // APNS_REGISTER_V1 — under UIScene the plugins register after launch, so
+    // firebase_messaging's own launch hook (which did this) never runs.
+    // Without it the phone never gets an APNs token and pushes don't arrive.
+    application.registerForRemoteNotifications()
+
     // UISCENE_ADOPTION_V1 — plugin registration moved to
     // didInitializeImplicitFlutterEngine. Registering against `self` here
     // needs an engine that does not exist yet under the scene lifecycle.
