@@ -102,5 +102,7 @@
             <action android:name="android.intent.action.PROCESS_TEXT"/>
             <data android:mimeType="text/plain"/>
         </intent>
+        <!-- PAYMENT_READER_V1 — Android 11+ package visibility: getLaunchIntentForPackage(KBZPay) -->
+        <package android:name="com.kbzbank.kpaycustomer" />
     </queries>
 </manifest>
