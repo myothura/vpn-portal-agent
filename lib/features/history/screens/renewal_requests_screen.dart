@@ -406,7 +406,12 @@ class _RenewalRequestsScreenState extends State<RenewalRequestsScreen> {
     // REJECT_CONTROLLER_DISPOSE_V1 — the dialog has closed and its field went
     // with it, but a TextEditingController is a ChangeNotifier and stays
     // registered until it is disposed. One was leaked per rejection.
-    controller.dispose();
+    // REJECT_CONTROLLER_DISPOSE_V2 — not yet: showDialog returns when pop()
+    // runs, while the dialog is still on screen for its exit animation and the
+    // TextField still listens to the controller. Disposing then tripped
+    // framework.dart "_dependents.isEmpty is not true" (debug red screen,
+    // 2026-10-27). The route transition is ~150 ms; 500 ms leaves margin.
+    Future<void>.delayed(const Duration(milliseconds: 500), controller.dispose);
 
     if (reason == null || reason.isEmpty || !mounted) {
       if (reason != null && reason.isEmpty) {
