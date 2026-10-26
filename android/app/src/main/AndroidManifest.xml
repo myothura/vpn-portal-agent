@@ -5,9 +5,6 @@
     <uses-permission android:name="android.permission.VIBRATE"/>
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
-    <!-- PAYMENT_READER_V1 — sticky reader service on the KBZPay phone -->
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"/>
 
     <!-- SESSION_HYGIENE_V1: allowBackup defaults to true, which puts the
          Sanctum bearer token (stored in SharedPreferences) into ADB backup
@@ -53,45 +50,6 @@
             android:name="com.google.firebase.messaging.default_notification_icon"
             android:resource="@mipmap/launcher_icon" />
 
-        <!-- PAYNOTI_PROBE_V1 -->
-        <service
-            android:name=".PaymentNotificationListener"
-            android:label="Portal Agent Payment Listener"
-            android:exported="true"
-            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
-            <intent-filter>
-                <action android:name="android.service.notification.NotificationListenerService" />
-            </intent-filter>
-        </service>
-
-        <!-- PAYMENT_READER_V1 -->
-        <service
-            android:name=".PaymentReaderService"
-            android:exported="false"
-            android:foregroundServiceType="dataSync" />
-        <receiver
-            android:name=".PaymentReaderBootReceiver"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.intent.action.BOOT_COMPLETED" />
-                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
-            </intent-filter>
-        </receiver>
-
-        <!-- PAYNOTI_A11Y_PROBE_V1 / PAYMENT_READER_V1 -->
-        <service
-            android:name=".PaymentAccessibilityService"
-            android:label="Portal Agent Payment Reader"
-            android:exported="true"
-            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
-            <intent-filter>
-                <action android:name="android.accessibilityservice.AccessibilityService" />
-            </intent-filter>
-            <meta-data
-                android:name="android.accessibilityservice"
-                android:resource="@xml/payment_a11y_config" />
-        </service>
-
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
@@ -102,7 +60,5 @@
             <action android:name="android.intent.action.PROCESS_TEXT"/>
             <data android:mimeType="text/plain"/>
         </intent>
-        <!-- PAYMENT_READER_V1 — Android 11+ package visibility: getLaunchIntentForPackage(KBZPay) -->
-        <package android:name="com.kbzbank.kpaycustomer" />
     </queries>
 </manifest>

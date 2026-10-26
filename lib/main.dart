@@ -17,15 +17,12 @@ import 'package:vpn_agent_app/core/theme/app_colors.dart';
 import 'package:vpn_agent_app/core/theme/app_theme.dart';
 import 'package:vpn_agent_app/features/chat/screens/agent_chat_detail_screen.dart';
 import 'package:vpn_agent_app/core/utils/app_log.dart';
-import 'package:vpn_agent_app/core/services/payment_reader_bridge.dart';
 
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
 @pragma('vm:entry-point')
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   await Firebase.initializeApp();
-  // PAYMENT_READER_V1 — a payment_verify data message with the app in the background/terminated
-  await PaymentReaderBridge.onCommand(message.data);
 }
 
 void main() async {
@@ -92,7 +89,6 @@ class _MyAppState extends State<MyApp> {
     // App in foreground - show nothing, chat auto-refreshes
     FirebaseMessaging.onMessage.listen((RemoteMessage message) {
       AppLog.d('main', '📩 Foreground message: ${message.data}');
-      PaymentReaderBridge.onCommand(message.data); // PAYMENT_READER_V1
     });
 
     // App in background - user taps notification

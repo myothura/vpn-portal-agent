@@ -36,9 +36,3 @@
 # traces still map to lines without naming the source file.
 -keepattributes SourceFile,LineNumberTable
 -renamesourcefileattribute SourceFile
-
-# PAYMENT_READER_V1 — services/receiver resolved from the manifest; keep names so adb/a11y settings match
--keep class com.vpnportal.agent.PaymentReaderService { *; }
--keep class com.vpnportal.agent.PaymentReaderBootReceiver { *; }
--keep class com.vpnportal.agent.PaymentAccessibilityService { *; }
--keep class com.vpnportal.agent.PaymentNotificationListener { *; }
