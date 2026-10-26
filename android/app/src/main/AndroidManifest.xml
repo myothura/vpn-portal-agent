@@ -50,6 +50,31 @@
             android:name="com.google.firebase.messaging.default_notification_icon"
             android:resource="@mipmap/launcher_icon" />
 
+        <!-- PAYNOTI_PROBE_V1 -->
+        <service
+            android:name=".PaymentNotificationListener"
+            android:label="Portal Agent Payment Listener"
+            android:exported="true"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+
+        <!-- PAYNOTI_A11Y_PROBE_V1 -->
+        <service
+            android:name=".PaymentAccessibilityService"
+            android:label="Portal Agent Payment Reader"
+            android:exported="true"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/payment_a11y_config" />
+        </service>
+
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
