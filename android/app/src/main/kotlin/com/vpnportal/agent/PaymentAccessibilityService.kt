@@ -41,6 +41,7 @@ class PaymentAccessibilityService : AccessibilityService() {
         private const val LIST_SETTLE_MS = 6_000L   // wait this long for rows before "not found"
         private val SKIP_PREFIXES = listOf("ကျော်မည်", "ကျော်ရန်", "Skip", "SKIP")
         private val DISMISS_TEXTS = listOf("နောက်မှ", "ပိတ်မည်", "Close", "Not now", "Later")
+        private val TIME_RE = Regex("(\\d{1,2}:\\d{2}:\\d{2})")
 
         @Volatile private var instance: PaymentAccessibilityService? = null
         @Volatile var busy: Boolean = false
@@ -68,15 +69,22 @@ class PaymentAccessibilityService : AccessibilityService() {
     private var historyAt = 0L
     private var inTabTapped = false
     private var lastDump = ""
+    private var lastTappedRow: String? = null
     private val rowsSeen = ArrayList<String>()
     private val timeout = Runnable { finish(JSONObject().put("found", false).put("note", "timeout in state $state")) }
     private val recheck = Runnable { if (state == S.HISTORY) rootInActiveWindow?.let { if (it.packageName?.toString() == KBZ) { stepGuard = 0L; drive(it) } } }
 
     // what we look for in the list
     private var wantTime = ""        // "23:15:26"
+    private var wantSec = -1         // seconds of day, for the tolerance match
     private var wantDayToday = false // "Today" row
     private var wantDay = ""         // "26/10"
     private var wantAmount = ""      // "600,000.00"
+    private val triedRows = HashSet<String>()   // rows whose receipt did not carry the slip's txn
+    private var candidateTxn = ""              // the slip's txn (digits) when known
+    // TIME_TOLERANCE_V1 — the sender's receipt and the receiver's history differ by a second or more
+    // (2026-10-27: 01:03:10 on the slip, 01:03:11 in history), so the time is matched within this window
+    private val TIME_TOLERANCE_SEC = 90
 
     override fun onServiceConnected() {
         instance = this
@@ -91,7 +99,8 @@ class PaymentAccessibilityService : AccessibilityService() {
 
     private fun begin(c: JSONObject, cb: (JSONObject) -> Unit) {
         cmd = c; onResult = cb
-        rowsSeen.clear(); inTabTapped = false; historyAt = 0L; stepGuard = 0L
+        rowsSeen.clear(); triedRows.clear(); inTabTapped = false; historyAt = 0L; stepGuard = 0L
+        candidateTxn = c.optString("txn_ref").filter { it.isDigit() }
         startedAt = System.currentTimeMillis()
         parseWant(c)
         state = S.OPENING
@@ -105,13 +114,19 @@ class PaymentAccessibilityService : AccessibilityService() {
         main.postDelayed({ rootInActiveWindow?.let { if (it.packageName?.toString() == KBZ) drive(it) } }, 1200)
     }
 
+    private fun secOfDay(hms: String): Int {
+        val p = hms.split(":"); if (p.size != 3) return -1
+        return (p[0].toIntOrNull() ?: return -1) * 3600 + (p[1].toIntOrNull() ?: return -1) * 60 + (p[2].toIntOrNull() ?: return -1)
+    }
+
     private fun parseWant(c: JSONObject) {
-        wantAmount = ""; wantTime = ""; wantDay = ""; wantDayToday = false
+        wantAmount = ""; wantTime = ""; wantSec = -1; wantDay = ""; wantDayToday = false
         c.optString("amount").filter { it.isDigit() }.toLongOrNull()?.let { wantAmount = String.format(Locale.US, "%,d.00", it) }
         val paid = c.optString("paid_at").trim()   // "26/10/2026 23:15:26"
         Regex("""(\d{1,2})/(\d{1,2})/(\d{4})\D+(\d{1,2}:\d{2}:\d{2})""").find(paid)?.let { m ->
             val d = m.groupValues[1].padStart(2, '0'); val mo = m.groupValues[2].padStart(2, '0'); val y = m.groupValues[3]
             wantTime = m.groupValues[4].let { if (it.length == 7) "0$it" else it }
+            wantSec = secOfDay(wantTime)
             wantDay = "$d/$mo"
             val today = SimpleDateFormat("dd/MM/yyyy", Locale.US).format(Calendar.getInstance().time)
             wantDayToday = today == "$d/$mo/$y"
@@ -162,9 +177,14 @@ class PaymentAccessibilityService : AccessibilityService() {
                 val txn = fields.optString("လုပ်ဆောင်မှုအမှတ်").filter { it.isDigit() }
                 if (txn.isEmpty()) return   // still rendering
                 // a receipt KBZPay was left on from before: only ours (tapped from history, or the slip's txn)
-                val wantTxn = cmd?.optString("txn_ref")?.filter { it.isDigit() } ?: ""
+                val wantTxn = candidateTxn
                 if (state != S.HISTORY && !(wantTxn.isNotEmpty() && wantTxn == txn)) {
                     stepGuard = now; Log.i(TAG, "stale receipt $txn, back"); performGlobalAction(GLOBAL_ACTION_BACK); return
+                }
+                // TIME_TOLERANCE_V1 — opened a near-time row that is not the slip's transfer: back, try the next one
+                if (wantTxn.isNotEmpty() && wantTxn != txn && triedRows.size < 3) {
+                    lastTappedRow?.let { triedRows.add(it) }
+                    stepGuard = now; Log.i(TAG, "receipt $txn != slip $wantTxn, trying next row"); performGlobalAction(GLOBAL_ACTION_BACK); return
                 }
                 state = S.RECEIPT; stepGuard = now
                 val amount = fields.optString("ငွေပမာဏ").ifEmpty { fields.optString("_amount") }
@@ -183,9 +203,12 @@ class PaymentAccessibilityService : AccessibilityService() {
                 }
                 val rows = listRows(root)
                 rowsSeen.clear(); rows.forEach { rowsSeen.add(it.second) }
-                val hit = rows.firstOrNull { rowMatches(it.second) }
+                val hit = rows.filter { it.second !in triedRows }
+                    .mapNotNull { r -> rowDelta(r.second)?.let { d -> r to d } }
+                    .minByOrNull { it.second }?.first
                 if (hit != null) {
                     stepGuard = now
+                    lastTappedRow = hit.second
                     Log.i(TAG, "tap row '${hit.second}'")
                     tapNode(hit.first)
                 } else if (rows.isNotEmpty() && now - historyAt > LIST_SETTLE_MS) {
@@ -227,16 +250,19 @@ class PaymentAccessibilityService : AccessibilityService() {
         return out
     }
 
-    private fun rowMatches(line: String): Boolean {
-        if (wantTime.isEmpty() && wantAmount.isEmpty()) return false
-        if (!line.contains("+")) return false // incoming only
-        if (wantTime.isNotEmpty()) {
-            if (!line.contains(wantTime)) return false
-            val dayOk = (wantDayToday && line.contains("Today")) || (wantDay.isNotEmpty() && line.contains("$wantDay "))
-            if (!dayOk) return false
-        }
-        if (wantAmount.isNotEmpty() && !line.contains(wantAmount)) return false
-        return true
+    /** null = not this row; else how far (seconds) its time is from the slip's — 0 when no time was given */
+    private fun rowDelta(line: String): Int? {
+        if (wantTime.isEmpty() && wantAmount.isEmpty()) return null
+        if (!line.contains("+")) return null // incoming only
+        if (wantAmount.isNotEmpty() && !line.contains(wantAmount)) return null
+        if (wantSec < 0) return 0
+        val dayOk = (wantDayToday && line.contains("Today")) || (wantDay.isNotEmpty() && line.contains("$wantDay "))
+        if (!dayOk) return null
+        val m = TIME_RE.find(line) ?: return null
+        val sec = secOfDay(m.groupValues[1].let { if (it.length == 7) "0$it" else it })
+        if (sec < 0) return null
+        val d = kotlin.math.abs(sec - wantSec)
+        return if (d <= TIME_TOLERANCE_SEC) d else null
     }
 
     /** Receipt label -> value. ids first (tv_field_name/tv_field_value), else label-then-next-text order. */
