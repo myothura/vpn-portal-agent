@@ -37,7 +37,7 @@ class PaymentAccessibilityService : AccessibilityService() {
     companion object {
         private const val KBZ = "com.kbzbank.kpaycustomer"
         private const val TAG = "PAYA11Y"
-        private const val TIMEOUT_MS = 45_000L
+        private const val TIMEOUT_MS = 30_000L
         private const val LIST_SETTLE_MS = 6_000L   // wait this long for rows before "not found"
         private val SKIP_PREFIXES = listOf("ကျော်မည်", "ကျော်ရန်", "Skip", "SKIP")
         private val DISMISS_TEXTS = listOf("နောက်မှ", "ပိတ်မည်", "Close", "Not now", "Later")
@@ -70,6 +70,7 @@ class PaymentAccessibilityService : AccessibilityService() {
     private var lastDump = ""
     private val rowsSeen = ArrayList<String>()
     private val timeout = Runnable { finish(JSONObject().put("found", false).put("note", "timeout in state $state")) }
+    private val recheck = Runnable { if (state == S.HISTORY) rootInActiveWindow?.let { if (it.packageName?.toString() == KBZ) { stepGuard = 0L; drive(it) } } }
 
     // what we look for in the list
     private var wantTime = ""        // "23:15:26"
@@ -119,7 +120,7 @@ class PaymentAccessibilityService : AccessibilityService() {
 
     private fun finish(result: JSONObject) {
         if (state == S.IDLE) return
-        main.removeCallbacks(timeout)
+        main.removeCallbacks(timeout); main.removeCallbacks(recheck)
         val st = state
         state = S.IDLE
         result.put("rows", JSONArray(rowsSeen.take(20)))
@@ -189,6 +190,9 @@ class PaymentAccessibilityService : AccessibilityService() {
                     tapNode(hit.first)
                 } else if (rows.isNotEmpty() && now - historyAt > LIST_SETTLE_MS) {
                     finish(JSONObject().put("found", false).put("note", "no row for time=${if (wantDayToday) "Today " else "$wantDay "}$wantTime amount=$wantAmount on first page"))
+                } else if (rows.isNotEmpty()) {
+                    // a settled list fires no more events: re-check once the settle window has passed
+                    main.removeCallbacks(recheck); main.postDelayed(recheck, LIST_SETTLE_MS - (now - historyAt) + 200)
                 }
             }
             isHome -> {
