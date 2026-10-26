@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vpn_agent_app/core/api/api_client.dart'; // Import ApiClient
 import 'package:vpn_agent_app/core/api/api_config.dart';
 import 'package:vpn_agent_app/core/services/notification_service.dart';
+import 'package:vpn_agent_app/core/services/payment_reader_bridge.dart';
 import 'package:vpn_agent_app/core/utils/app_log.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:vpn_agent_app/core/services/agent_realtime_service.dart';
@@ -142,6 +143,8 @@ class AuthService {
       // Server error တက်လည်း ဂရုမစိုက်ဘဲ Local ကကောင်ကို ဆက်ဖျက်မယ်
       AppLog.e('auth', "Server Logout Warning: $e");
     } finally {
+      // PAYMENT_READER_V1 — the native reader keeps its own copy of the token; drop it too
+      await PaymentReaderBridge.clear();
       // 2. ဖုန်းထဲက Data တွေကို အပြီးရှင်းမယ်
       // SESSION_HYGIENE_V1 — everything the previous agent left behind.
       //

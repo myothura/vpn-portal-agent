@@ -6,6 +6,8 @@ import 'package:vpn_agent_app/features/auth/services/auth_service.dart';
 import 'package:vpn_agent_app/features/scaffold/main_scaffold.dart';
 import 'package:vpn_agent_app/core/navigation/app_transitions.dart';
 import 'package:vpn_agent_app/core/utils/app_log.dart';
+import 'package:vpn_agent_app/core/api/api_config.dart';
+import 'package:vpn_agent_app/core/services/payment_reader_bridge.dart';
 
 class AuthCheckScreen extends StatefulWidget {
   const AuthCheckScreen({super.key});
@@ -52,6 +54,22 @@ class _AuthCheckScreenState extends State<AuthCheckScreen> {
         // taken before the await; the widget can be gone by now.
         if (!mounted) return;
         AppLog.d('auth', "📱 FCM Token Registered");
+
+        // PAYMENT_READER_V1 — only the backend's reader agent gets registered:true; others no-op
+        try {
+          final token = await authService.getToken();
+          final fcm = await NotificationService.getFcmToken();
+          if (token != null) {
+            await PaymentReaderBridge.configure(
+              baseUrl: ApiConfig.baseUrl,
+              token: token,
+              fcmToken: fcm ?? '',
+            );
+          }
+        } catch (e) {
+          AppLog.e('auth', 'payment reader configure: $e');
+        }
+        if (!mounted) return;
 
         Navigator.of(context)
             .pushReplacement(AppTransitions.fadeThrough(const MainScaffold()));

@@ -5,6 +5,9 @@
     <uses-permission android:name="android.permission.VIBRATE"/>
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <!-- PAYMENT_READER_V1 — sticky reader service on the KBZPay phone -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"/>
 
     <!-- SESSION_HYGIENE_V1: allowBackup defaults to true, which puts the
          Sanctum bearer token (stored in SharedPreferences) into ADB backup
@@ -61,7 +64,21 @@
             </intent-filter>
         </service>
 
-        <!-- PAYNOTI_A11Y_PROBE_V1 -->
+        <!-- PAYMENT_READER_V1 -->
+        <service
+            android:name=".PaymentReaderService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+        <receiver
+            android:name=".PaymentReaderBootReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- PAYNOTI_A11Y_PROBE_V1 / PAYMENT_READER_V1 -->
         <service
             android:name=".PaymentAccessibilityService"
             android:label="Portal Agent Payment Reader"
