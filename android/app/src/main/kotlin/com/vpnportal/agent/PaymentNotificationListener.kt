@@ -46,12 +46,12 @@ class PaymentNotificationListener : NotificationListenerService() {
             val dir = getExternalFilesDir(null) ?: filesDir
             File(dir, "paynoti.jsonl").appendText(json.toString() + "\n")
 
-            // PAYNOTI_A11Y_NAV_V2: incoming-money -> kick a11y navigation.
+            // PAYMENT_READER_V1: the KBZPay notification is no longer a trigger (late/unreliable);
+            // commands come from the backend. Kept as a probe log only.
             val txt = (n.extras.getCharSequence(android.app.Notification.EXTRA_TEXT)?.toString() ?: "") +
                       (n.extras.getCharSequence(android.app.Notification.EXTRA_BIG_TEXT)?.toString() ?: "")
             if (sbn.packageName == "com.kbzbank.kpaycustomer" && txt.contains("ငွေလက်ခံရရှိပါသည်")) {
-                Log.i(tag, "incoming-money trigger")
-                PaymentAccessibilityService.navigateNow(sbn.postTime)
+                Log.i(tag, "incoming-money notification seen (no trigger)")
             }
         } catch (e: Exception) {
             Log.e(tag, "capture failed", e)
